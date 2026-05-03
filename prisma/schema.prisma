@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ... as tuas tabelas (model Company, model User, etc) continuam aqui para baixo intactas!
+
+// =========================================
+// TABELA: EMPRESA
+// =========================================
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  cnpj      String   @unique
+  createdAt DateTime @default(now())
+  users     User[]
+}
+
+// =========================================
+// TABELA: UTILIZADOR (Gamificação)
+// =========================================
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("EMPLOYEE")
+  
+  xp           Int      @default(0)
+  streak       Int      @default(0)
+  
+  companyId    String
+  company      Company  @relation(fields: [companyId], references: [id])
+  
+  progresses   UserProgress[]
+  
+  createdAt    DateTime @default(now())
+}
+
+// =========================================
+// TABELA: CURSO / TRILHA
+// =========================================
+model Course {
+  id           String   @id @default(uuid())
+  title        String
+  description  String?
+  totalModules Int      @default(1)
+  
+  progresses   UserProgress[]
+}
+
+// =========================================
+// TABELA: PROGRESSO DO UTILIZADOR
+// =========================================
+model UserProgress {
+  id                 String   @id @default(uuid())
+  
+  userId             String
+  user               User     @relation(fields: [userId], references: [id])
+  
+  courseId           String
+  course             Course   @relation(fields: [courseId], references: [id])
+  
+  completedModules   Int      @default(0)
+  progressPercentage Float    @default(0.0)
+  status             String   @default("IN_PROGRESS")
+  
+  updatedAt          DateTime @updatedAt
+
+  @@unique([userId, courseId])
+}
