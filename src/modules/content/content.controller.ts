@@ -85,7 +85,9 @@ export class ContentController {
       storage: diskStorage({
         destination: (_request, _file, callback) => {
           const uploadPath = uploadsRootPath();
-          if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath);
+          if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+          }
           callback(null, uploadPath);
         },
         filename: (_request, file, callback) => {
