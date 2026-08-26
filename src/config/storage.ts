@@ -12,9 +12,13 @@ export function publicUploadUrl(filename: string) {
   const fallbackPort = process.env.PORT ?? '4000';
   const configuredUrl = process.env.API_PUBLIC_URL?.trim();
   const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN?.trim();
-  const apiPublicUrl = (
+  const rawPublicUrl =
     configuredUrl ||
-    (railwayDomain ? `https://${railwayDomain}` : `http://localhost:${fallbackPort}`)
+    (railwayDomain ? railwayDomain : `http://localhost:${fallbackPort}`);
+  const apiPublicUrl = (
+    /^https?:\/\//i.test(rawPublicUrl)
+      ? rawPublicUrl
+      : `${/^(localhost|127\.0\.0\.1)(:|\/|$)/i.test(rawPublicUrl) ? 'http' : 'https'}://${rawPublicUrl}`
   ).replace(/\/$/, '');
 
   return `${apiPublicUrl}/uploads/${encodeURIComponent(filename)}`;
