@@ -29,13 +29,6 @@ export class ReportsService {
 
   async listCourses(manager: User) {
     const courses = await this.prisma.course.findMany({
-      where: {
-        userAccesses: {
-          some: {
-            user: { companyId: manager.companyId, role: { not: Role.ADMIN } },
-          },
-        },
-      },
       orderBy: { title: 'asc' },
       select: {
         id: true,
@@ -77,11 +70,6 @@ export class ReportsService {
     const course = await this.prisma.course.findFirst({
       where: {
         id: courseId,
-        userAccesses: {
-          some: {
-            user: { companyId: manager.companyId, role: { not: Role.ADMIN } },
-          },
-        },
       },
       include: {
         modules: {
@@ -92,9 +80,7 @@ export class ReportsService {
     });
 
     if (!course) {
-      throw new NotFoundException(
-        'Curso não encontrado ou sem colaboradores atribuídos nesta empresa.',
-      );
+      throw new NotFoundException('Curso não encontrado.');
     }
 
     const company = await this.prisma.company.findUnique({
