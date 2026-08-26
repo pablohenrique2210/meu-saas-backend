@@ -6,10 +6,10 @@
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
-    "build": "nest build",
-    "build:deploy": "prisma generate && nest build",
+    "build": "prisma generate && nest build",
+    "build:deploy": "npm run build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "nest start",
+    "start": "npm run start:deploy",
     "start:dev": "node scripts/start-dev-safe.js",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/src/main.js",

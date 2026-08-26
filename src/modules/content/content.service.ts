@@ -5,11 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { LessonType, Role } from '@prisma/client';
-import type { User } from '@prisma/client';
 import type {
   ModuleGameType as ModuleGameTypeValue,
   Prisma,
-} from '../../../generated/prisma';
+  User,
+} from '@prisma/client';
 import { existsSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import { ModuleGameType } from '../../games/game-types';

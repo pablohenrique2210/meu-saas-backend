@@ -5,8 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
-import type { User } from '@prisma/client';
-import type { Prisma } from '../../generated/prisma';
+import type { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListGameResultsDto } from './dto/list-game-results.dto';
 import { SubmitGameResultDto } from './dto/submit-game-result.dto';
