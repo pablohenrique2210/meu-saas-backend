@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -40,9 +39,16 @@ export class ReportsService {
             modules: true,
             userAccesses: {
               where: {
-                user: {
+                user: { companyId: manager.companyId },
+              },
+            },
+            inviteAccesses: {
+              where: {
+                invite: {
                   companyId: manager.companyId,
-                  role: { not: Role.ADMIN },
+                  status: 'PENDING',
+                  claimedByUserId: null,
+                  expiresAt: { gt: new Date() },
                 },
               },
             },
@@ -57,7 +63,8 @@ export class ReportsService {
       title: course.title,
       description: course.description,
       category: course.category,
-      collaboratorsAssigned: course._count.userAccesses,
+      collaboratorsAssigned:
+        course._count.userAccesses + course._count.inviteAccesses,
       totalModules: course._count.modules,
       totalLessons: course.modules.reduce(
         (total, module) => total + module._count.lessons,
@@ -89,25 +96,60 @@ export class ReportsService {
     });
     if (!company) throw new NotFoundException('Empresa não encontrada.');
 
-    const accesses = await this.prisma.userCourseAccess.findMany({
-      where: {
-        courseId,
-        user: { companyId: manager.companyId, role: { not: Role.ADMIN } },
-      },
-      orderBy: { user: { name: 'asc' } },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            position: true,
-            department: true,
-            isActive: true,
+    const [userAccesses, pendingInvites] = await Promise.all([
+      this.prisma.userCourseAccess.findMany({
+        where: {
+          courseId,
+          user: { companyId: manager.companyId },
+        },
+        orderBy: { user: { name: 'asc' } },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              position: true,
+              department: true,
+              isActive: true,
+            },
           },
         },
-      },
-    });
+      }),
+      this.prisma.employeeInvite.findMany({
+        where: {
+          companyId: manager.companyId,
+          status: 'PENDING',
+          claimedByUserId: null,
+          expiresAt: { gt: new Date() },
+          courseAccesses: { some: { courseId } },
+        },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          position: true,
+          department: true,
+        },
+      }),
+    ]);
+    const accesses = [
+      ...userAccesses,
+      ...pendingInvites.map((invite) => ({
+        userId: `invite:${invite.id}`,
+        user: {
+          id: `invite:${invite.id}`,
+          name: invite.name,
+          email: invite.email,
+          position: invite.position,
+          department: invite.department,
+          isActive: false,
+        },
+      })),
+    ].sort((first, second) =>
+      first.user.name.localeCompare(second.user.name, 'pt-BR'),
+    );
 
     const lessonIds = course.modules.flatMap((module) =>
       module.lessons.map((lesson) => lesson.id),
