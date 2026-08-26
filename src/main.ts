@@ -14,6 +14,31 @@ async function bootstrap() {
     .split(',')
     .map((url) => url.trim().replace(/\/$/, ''))
     .filter(Boolean);
+  const vercelFrontendProjects = (
+    process.env.VERCEL_FRONTEND_PROJECTS ??
+    'pablohenrique2210-meu-saas-frontend,laconsultoria'
+  )
+    .split(',')
+    .map((project) => project.trim().toLowerCase())
+    .filter(Boolean);
+
+  const isAllowedVercelOrigin = (origin: string) => {
+    try {
+      const url = new URL(origin);
+      const hostname = url.hostname.toLowerCase();
+      return (
+        url.protocol === 'https:' &&
+        hostname.endsWith('.vercel.app') &&
+        vercelFrontendProjects.some(
+          (project) =>
+            hostname === `${project}.vercel.app` ||
+            hostname.startsWith(`${project}-`),
+        )
+      );
+    } catch {
+      return false;
+    }
+  };
 
   if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
     throw new Error('A variável PORT precisa conter uma porta válida.');
@@ -25,7 +50,11 @@ async function bootstrap() {
   app.enableCors({
     origin(origin, callback) {
       // Requisições sem Origin incluem health checks e chamadas servidor-servidor.
-      if (!origin || frontendUrls.includes(origin.replace(/\/$/, ''))) {
+      if (
+        !origin ||
+        frontendUrls.includes(origin.replace(/\/$/, '')) ||
+        isAllowedVercelOrigin(origin)
+      ) {
         callback(null, true);
         return;
       }
