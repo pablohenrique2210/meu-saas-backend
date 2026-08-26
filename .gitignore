@@ -56,3 +56,12 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 /generated/prisma
+
+# Runtime/build artifacts that must not be published
+/uploads/
+/tmp/
+/artifacts/
+/output/
+/meu-saas-backend/
+/dev
+/migrations.sql

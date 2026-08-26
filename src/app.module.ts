@@ -1,15 +1,31 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config'; // 👈 1. Importa aqui
+import { ConfigModule } from '@nestjs/config';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { ContentModule } from './modules/content/content.module';
 import { UsersModule } from './users/users.module';
-import { CompaniesModule } from './companies/companies.module';
+import { ReportsModule } from './reports/reports.module';
+import { GamesModule } from './games/games.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { uploadsRootPath } from './config/storage';
 
 @Module({
   imports: [
-    ConfigModule.forRoot(), // 👈 2. Adiciona isto como o PRIMEIRO da lista!
+    ConfigModule.forRoot({ isGlobal: true }),
+
+    // 🚀 A magia para ler os teus vídeos e imagens
+    ServeStaticModule.forRoot({
+      rootPath: uploadsRootPath(),
+      serveRoot: '/uploads',
+    }),
+
+    // 👇 O teu módulo de conteúdo
+    ContentModule,
     UsersModule,
-    CompaniesModule
+    ReportsModule,
+    GamesModule,
   ],
-  controllers: [],
-  providers: [],
+  controllers: [AppController],
+  providers: [AppService],
 })
 export class AppModule {}

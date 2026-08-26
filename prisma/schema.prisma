@@ -1,5 +1,8 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
+  output   = "../generated/prisma"
 }
 
 datasource db {
@@ -7,69 +10,332 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ... as tuas tabelas (model Company, model User, etc) continuam aqui para baixo intactas!
+// --- ENUMS PARA FLEXIBILIDADE ---
+enum Role {
+  USER
+  ADMIN
+  HR_MANAGER
+}
 
-// =========================================
-// TABELA: EMPRESA
-// =========================================
+enum LessonType {
+  VIDEO
+  TEXT
+  QUIZ
+}
+
+enum ModuleGameType {
+  DILEMA
+  INSPECAO
+  CORRIDA
+}
+
+enum Mood {
+  HAPPY
+  NEUTRAL
+  SAD
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum EmployeeInviteStatus {
+  PENDING
+  CLAIMED
+  REVOKED
+  EXPIRED
+}
+
+// --- ESTRUTURA MULTI-TENANT ---
 model Company {
-  id        String   @id @default(uuid())
-  name      String
-  cnpj      String   @unique
-  createdAt DateTime @default(now())
-  users     User[]
+  id              String           @id @default(uuid())
+  name            String
+  createdAt       DateTime         @default(now())
+  users           User[]
+  alerts          Alert[]
+  employeeInvites EmployeeInvite[]
 }
 
-// =========================================
-// TABELA: UTILIZADOR (Gamificação)
-// =========================================
+// Documentação: Atualização do modelo User com campos de RH
 model User {
-  id           String   @id @default(uuid())
-  name         String
-  email        String   @unique
-  passwordHash String
-  role         String   @default("EMPLOYEE")
-  
-  xp           Int      @default(0)
-  streak       Int      @default(0)
-  
-  companyId    String
-  company      Company  @relation(fields: [companyId], references: [id])
-  
-  progresses   UserProgress[]
-  
-  createdAt    DateTime @default(now())
+  id        String @id // ID do Clerk
+  companyId String
+  name      String
+  email     String @unique
+  role      Role   @default(USER)
+
+  // ==========================================
+  // 👇 NOVOS CAMPOS PARA O PERFIL CORPORATIVO (RH)
+  // ==========================================
+
+  // Documentação: O cargo do colaborador (Ex: "Engenheiro de Software")
+  position String?
+
+  // Documentação: O departamento ao qual pertence (Ex: "TI", "Vendas")
+  department String?
+
+  // Documentação: Telefone de contacto (Ex: "+351 912 345 678")
+  phone String?
+
+  // Documentação: Data em que começou a trabalhar na empresa
+  hireDate DateTime?
+
+  // Documentação: Indica se o utilizador ainda trabalha na empresa (Ativo/Inativo)
+  isActive Boolean @default(true)
+
+  // ==========================================
+
+  // Relacionamentos existentes
+  company           Company            @relation(fields: [companyId], references: [id])
+  gamification      UserGamification?
+  progress          UserProgress[]
+  checkIns          CheckIn[]
+  gameProgress      UserGameProgress[]
+  moduleGameResults ModuleGameResult[]
+  courseAccesses    UserCourseAccess[]
 }
 
-// =========================================
-// TABELA: CURSO / TRILHA
-// =========================================
+// (Os restantes modelos como Company, Course, etc., mantêm-se exatamente iguais ao teu script original).
+
+// --- ENGINE DE CONTEÚDO (A JÓIA DA COROA) ---
 model Course {
-  id           String   @id @default(uuid())
-  title        String
-  description  String?
-  totalModules Int      @default(1)
-  
-  progresses   UserProgress[]
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  category    String
+  author      String? // 👈 NOVO: Autor do curso
+  coverUrl    String? // 👈 NOVO: URL da Capa do curso
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  modules        Module[]
+  tracks         TrackCourse[]
+  userAccesses   UserCourseAccess[]
+  inviteAccesses EmployeeInviteCourse[]
 }
 
-// =========================================
-// TABELA: PROGRESSO DO UTILIZADOR
-// =========================================
-model UserProgress {
-  id                 String   @id @default(uuid())
-  
-  userId             String
-  user               User     @relation(fields: [userId], references: [id])
-  
-  courseId           String
-  course             Course   @relation(fields: [courseId], references: [id])
-  
-  completedModules   Int      @default(0)
-  progressPercentage Float    @default(0.0)
-  status             String   @default("IN_PROGRESS")
-  
-  updatedAt          DateTime @updatedAt
+// O RH pré-autoriza o colaborador sem precisar conhecer o ID do Clerk.
+// O CPF nunca é persistido em texto puro; apenas o HMAC e os 4 últimos dígitos.
+model EmployeeInvite {
+  id                String               @id @default(uuid())
+  companyId         String
+  createdByUserId   String
+  name              String
+  email             String
+  cpfHash           String
+  cpfLast4          String
+  role              Role                 @default(USER)
+  position          String?
+  department        String?
+  phone             String?
+  hireDate          DateTime?
+  status            EmployeeInviteStatus @default(PENDING)
+  expiresAt         DateTime
+  clerkInvitationId String?              @unique
+  claimedByUserId   String?              @unique
+  claimedAt         DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
 
-  @@unique([userId, courseId])
+  company        Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  courseAccesses EmployeeInviteCourse[]
+
+  @@index([companyId, status])
+  @@index([email, status])
+}
+
+model EmployeeInviteCourse {
+  inviteId String
+  courseId String
+
+  invite EmployeeInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+  course Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@id([inviteId, courseId])
+}
+
+model UserCourseAccess {
+  userId          String
+  courseId        String
+  grantedByUserId String
+  grantedAt       DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@id([userId, courseId])
+  @@index([courseId])
+}
+
+model Module {
+  id          String          @id @default(uuid())
+  courseId    String
+  title       String
+  description String?
+  order       Int             @default(0)
+  isPublished Boolean         @default(false)
+  gameType    ModuleGameType?
+  gameConfig  Json?
+
+  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons     Lesson[]
+  gameResults ModuleGameResult[]
+}
+
+// --- SISTEMA DE TRILHAS (TRACKS) ---
+model Track {
+  id          String  @id @default(uuid())
+  title       String
+  description String?
+  triggerType String // Onde a mágica acontece: "burnout", "anxiety", "low_engagement"
+  isPublished Boolean @default(false)
+
+  courses TrackCourse[]
+}
+
+model TrackCourse {
+  id       String @id @default(uuid())
+  trackId  String
+  courseId String
+
+  track  Track  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+// --- INTERAÇÃO E GAMIFICAÇÃO ---
+model UserProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  lessonId    String
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  user   User   @relation(fields: [userId], references: [id])
+  lesson Lesson @relation(fields: [lessonId], references: [id])
+
+  @@unique([userId, lessonId])
+}
+
+model UserGamification {
+  id           String    @id @default(uuid())
+  userId       String    @unique
+  xp           Int       @default(0)
+  streak       Int       @default(0)
+  lastActivity DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model CheckIn {
+  id        String   @id @default(uuid())
+  userId    String
+  mood      Mood
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Alert {
+  id        String    @id @default(uuid())
+  companyId String
+  type      String // "burnout", "turnover"
+  riskLevel RiskLevel
+  message   String
+  createdAt DateTime  @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+// ... (teus modelos anteriores de Course, Module, Lesson continuam iguais) ...
+
+model Lesson {
+  id                  String     @id @default(uuid())
+  moduleId            String
+  title               String
+  type                LessonType @default(VIDEO)
+  contentUrl          String?
+  duration            Int        @default(0)
+  minimumWatchSeconds Int        @default(0)
+  order               Int        @default(0)
+  isPublished         Boolean    @default(false)
+
+  module      Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  progress    UserProgress[]
+  attachments Attachment[] // 👈 NOVO: Uma aula pode ter vários anexos!
+}
+
+// 📎 NOVO: GESTÃO DE ARQUIVOS E LINKS
+model Attachment {
+  id        String   @id @default(uuid())
+  lessonId  String
+  title     String
+  type      String // Ex: "PDF", "WORD", "LINK", "EXCEL"
+  url       String // O link do S3/UploadThing ou URL externo
+  createdAt DateTime @default(now())
+
+  lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+}
+
+// 🎮 NOVO: ÁREA DE JOGOS (GAMIFICATION)
+model Game {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  type        String // Ex: "QUIZ_INTERATIVO", "ESCAPE_ROOM", "DECISION_MAKING"
+  gameUrl     String? // Link do iframe do jogo (se for externo/HTML5)
+  xpReward    Int      @default(100) // Quantos XP o aluno ganha ao vencer
+  isPublished Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  playedBy UserGameProgress[]
+}
+
+// 🏆 NOVO: PROGRESSO NOS JOGOS
+model UserGameProgress {
+  id          String    @id @default(uuid())
+  userId      String
+  gameId      String
+  score       Int       @default(0) // Pontuação no jogo
+  completed   Boolean   @default(false)
+  completedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, gameId]) // Garante que o usuário só tem um progresso por jogo
+}
+
+model ModuleGameResult {
+  id               String         @id @default(uuid())
+  employeeId       String
+  moduleId         String
+  gameType         ModuleGameType
+  finalScore       Int
+  timeSpentSeconds Int
+  metrics          Json
+  completedAt      DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  employee User   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  module   Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, moduleId, gameType])
+  @@index([moduleId, gameType])
+  @@index([completedAt])
+}
+
+model LessonProgress {
+  id             String   @id @default(uuid())
+  userId         String // O ID do aluno (vindo do Clerk)
+  lessonId       String // O ID da aula
+  lastTime       Float // O segundo exato onde parou (ex: 145.5)
+  watchedSeconds Float    @default(0)
+  isCompleted    Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+
+  // Garante que só existe um registo por aluno/aula
+  @@unique([userId, lessonId])
 }

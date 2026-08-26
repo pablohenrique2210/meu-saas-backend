@@ -11,8 +11,8 @@ export class CompaniesService {
     return 'This action adds a new company';
   }
 
- async findAll() {
-    return await this.prisma.company.findMany(); 
+  async findAll() {
+    return await this.prisma.company.findMany();
   }
 
   findOne(id: string) {

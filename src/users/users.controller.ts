@@ -1,34 +1,87 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
-import { UsersService } from './users.service';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { Role } from '@prisma/client';
+import type { User } from '@prisma/client';
+import { ClerkAuthGuard } from '../auth/clerk-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { DatabaseUserGuard } from '../auth/database-user.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
+import { hasRhEmailAccess } from '../auth/rh-access';
+import { RhAccessGuard } from '../auth/rh-access.guard';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { UsersService } from './users.service';
 
 @Controller('users')
+@UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard)
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @Get('me')
+  getMyProfile(@CurrentUser() user: User) {
+    return this.usersService.getProfile(user.id);
+  }
+
+  @Patch('me')
+  updateMyProfile(@CurrentUser() user: User, @Body() dto: UpdateProfileDto) {
+    return this.usersService.updateProfile(user.id, dto);
+  }
+
+  @Get('me/rh-access')
+  getMyRhAccess(@CurrentUser() user: User) {
+    return {
+      allowed:
+        hasRhEmailAccess(user) &&
+        (user.role === Role.ADMIN || user.role === Role.HR_MANAGER),
+    };
+  }
+
   @Post()
-  create(@Body() createUserDto: CreateUserDto) {
-    return this.usersService.create(createUserDto);
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  createUser(@CurrentUser() manager: User, @Body() dto: CreateUserDto) {
+    return this.usersService.createManagedUser(manager, dto);
   }
 
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  listUsers(@CurrentUser() manager: User) {
+    return this.usersService.findEmployeesForHR(manager);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findOne(+id);
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  getUser(@CurrentUser() manager: User, @Param('id') id: string) {
+    return this.usersService.findEmployeeForHR(manager, id);
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() updateUserDto: UpdateUserDto) {
-    return this.usersService.update(+id, updateUserDto);
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  updateUser(
+    @CurrentUser() manager: User,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+  ) {
+    return this.usersService.update(manager, id, dto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.remove(+id);
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  removeUser(@CurrentUser() manager: User, @Param('id') id: string) {
+    return this.usersService.remove(manager, id);
   }
 }
