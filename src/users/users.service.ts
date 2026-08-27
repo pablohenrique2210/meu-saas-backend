@@ -24,6 +24,12 @@ const userProfileSelect = {
   phone: true,
   hireDate: true,
   isActive: true,
+  company: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 @Injectable()
