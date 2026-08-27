@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { verifyToken } from '@clerk/backend';
+import { getClerkAuthorizedParties } from '../config/frontend-origins';
 
 export interface ClerkAuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
@@ -41,12 +42,10 @@ export class ClerkAuthGuard implements CanActivate {
       throw new UnauthorizedException('Authentication is not configured.');
     }
 
-    const authorizedParties = (
-      process.env.CLERK_AUTHORIZED_PARTIES ?? 'http://localhost:3000'
-    )
-      .split(',')
-      .map((party) => party.trim())
-      .filter(Boolean);
+    const requestOrigin = request.headers.origin;
+    const authorizedParties = getClerkAuthorizedParties(
+      typeof requestOrigin === 'string' ? requestOrigin : undefined,
+    );
 
     try {
       const decodedToken = await verifyToken(token, {
