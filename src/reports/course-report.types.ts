@@ -25,6 +25,20 @@ export interface LessonReport {
   startedCount: number;
   completedCount: number;
   completionRate: number;
+  quizConfigured: boolean;
+  quizCompletedCount: number;
+  quizParticipationRate: number;
+  averageQuizScore: number;
+}
+
+export interface LessonQuizResultReport {
+  lessonId: string;
+  lessonTitle: string;
+  finalScore: number;
+  correctAnswers: number;
+  totalQuestions: number;
+  percentage: number;
+  completedAt: string;
 }
 
 export interface ModuleReport {
@@ -46,6 +60,7 @@ export interface CollaboratorModuleReport {
   progress: number;
   status: ProgressStatus;
   evaluation: EvaluationResultReport | null;
+  lessonQuizzes: LessonQuizResultReport[];
 }
 
 export interface CollaboratorReport {

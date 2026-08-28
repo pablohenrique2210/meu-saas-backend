@@ -18,12 +18,14 @@ import type { User } from '@prisma/client';
 import type { Response } from 'express';
 import {
   IsBoolean,
+  ArrayMinSize,
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   Min,
 } from 'class-validator';
-import { IsInt, Matches, Max } from 'class-validator';
+import { IsInt, Matches, Max, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
@@ -77,6 +79,27 @@ export class UploadChunkDto {
   mimeType?: string;
 }
 
+export class LessonQuizAnswerDto {
+  @IsString()
+  questionId: string;
+
+  @IsString()
+  selectedOptionId: string;
+}
+
+export class SubmitLessonQuizDto {
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => LessonQuizAnswerDto)
+  answers: LessonQuizAnswerDto[];
+}
+
+export class SaveLessonNoteDto {
+  @IsString()
+  @MaxLength(20_000)
+  content: string;
+}
+
 @Controller('courses')
 @UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard)
 export class ContentController {
@@ -106,6 +129,40 @@ export class ContentController {
     @Param('lessonId') lessonId: string,
   ) {
     return this.contentService.getProgress(user, lessonId);
+  }
+
+  @Get('lessons/:lessonId/quiz')
+  getLessonQuiz(
+    @CurrentUser() user: User,
+    @Param('lessonId') lessonId: string,
+  ) {
+    return this.contentService.getLessonQuiz(user, lessonId);
+  }
+
+  @Post('lessons/:lessonId/quiz')
+  submitLessonQuiz(
+    @CurrentUser() user: User,
+    @Param('lessonId') lessonId: string,
+    @Body() dto: SubmitLessonQuizDto,
+  ) {
+    return this.contentService.submitLessonQuiz(user, lessonId, dto.answers);
+  }
+
+  @Get('lessons/:lessonId/note')
+  getLessonNote(
+    @CurrentUser() user: User,
+    @Param('lessonId') lessonId: string,
+  ) {
+    return this.contentService.getLessonNote(user, lessonId);
+  }
+
+  @Put('lessons/:lessonId/note')
+  saveLessonNote(
+    @CurrentUser() user: User,
+    @Param('lessonId') lessonId: string,
+    @Body() dto: SaveLessonNoteDto,
+  ) {
+    return this.contentService.saveLessonNote(user, lessonId, dto.content);
   }
 
   @Post('upload')

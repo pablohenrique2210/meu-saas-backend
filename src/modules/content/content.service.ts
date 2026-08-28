@@ -22,12 +22,13 @@ type AccessibleLesson = {
   type: LessonType;
   duration: number;
   minimumWatchSeconds: number;
+  quizConfig: Prisma.JsonValue | null;
   module: {
     course: {
       modules: Array<{
         id: string;
         gameType: ModuleGameTypeValue | null;
-        lessons: Array<{ id: string }>;
+        lessons: Array<{ id: string; quizConfig: Prisma.JsonValue | null }>;
       }>;
     };
   };
@@ -67,18 +68,29 @@ export class ContentService {
       safeLastTime,
     );
     const requiredSeconds = this.requiredWatchSeconds(user, lesson);
+    const quizRequired =
+      user.role === Role.USER && this.hasLessonQuiz(lesson.quizConfig);
+    const quizResult = quizRequired
+      ? await this.prisma.lessonQuizResult.findUnique({
+          where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
+          select: { id: true },
+        })
+      : null;
+    const quizCompleted = !quizRequired || Boolean(quizResult);
     const predictedWatchedSeconds =
       (existingProgress?.watchedSeconds ?? 0) + watchedIncrement;
     const shouldComplete =
-      existingProgress?.isCompleted === true ||
-      (isCompleted === true && predictedWatchedSeconds >= requiredSeconds);
+      (existingProgress?.isCompleted === true && quizCompleted) ||
+      (isCompleted === true &&
+        predictedWatchedSeconds >= requiredSeconds &&
+        quizCompleted);
 
     const progress = await this.prisma.lessonProgress.upsert({
       where: { userId_lessonId: { userId: user.id, lessonId } },
       update: {
         lastTime: safeLastTime,
         watchedSeconds: { increment: watchedIncrement },
-        ...(shouldComplete && { isCompleted: true }),
+        isCompleted: shouldComplete,
       },
       create: {
         userId: user.id,
@@ -94,16 +106,30 @@ export class ContentService {
         0,
         Math.ceil(requiredSeconds - progress.watchedSeconds),
       );
-      throw new ForbiddenException({
-        code: 'MINIMUM_WATCH_TIME_NOT_REACHED',
-        message: `Assista mais ${remainingSeconds} segundos antes de concluir esta aula.`,
-        minimumWatchSeconds: requiredSeconds,
-        watchedSeconds: progress.watchedSeconds,
-        remainingSeconds,
-      });
+      if (remainingSeconds > 0) {
+        throw new ForbiddenException({
+          code: 'MINIMUM_WATCH_TIME_NOT_REACHED',
+          message: `Assista mais ${remainingSeconds} segundos antes de concluir esta aula.`,
+          minimumWatchSeconds: requiredSeconds,
+          watchedSeconds: progress.watchedSeconds,
+          remainingSeconds,
+        });
+      }
+      if (!quizCompleted) {
+        throw new ForbiddenException({
+          code: 'LESSON_QUIZ_REQUIRED',
+          message: 'Conclua o quiz desta aula antes de avançar.',
+          lessonId,
+        });
+      }
     }
 
-    return this.withProgressRequirement(progress, requiredSeconds);
+    return this.withProgressRequirement(
+      progress,
+      requiredSeconds,
+      quizRequired,
+      quizCompleted,
+    );
   }
 
   async getProgress(user: User, lessonId: string) {
@@ -114,10 +140,158 @@ export class ContentService {
       where: { userId_lessonId: { userId: user.id, lessonId } },
     });
 
+    const quizRequired =
+      user.role === Role.USER && this.hasLessonQuiz(lesson.quizConfig);
+    const quizCompleted = quizRequired
+      ? Boolean(
+          await this.prisma.lessonQuizResult.findUnique({
+            where: {
+              employeeId_lessonId: { employeeId: user.id, lessonId },
+            },
+            select: { id: true },
+          }),
+        )
+      : true;
+
     return this.withProgressRequirement(
       progress,
       this.requiredWatchSeconds(user, lesson),
+      quizRequired,
+      quizCompleted,
     );
+  }
+
+  async getLessonQuiz(user: User, lessonId: string) {
+    const lesson = await this.assertCanAccessLesson(user, lessonId);
+    await this.assertLessonIsUnlocked(user, lesson);
+    const config = this.lessonQuizConfigFor(lesson.quizConfig);
+    const completedResult = await this.prisma.lessonQuizResult.findUnique({
+      where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
+      select: {
+        finalScore: true,
+        correctAnswers: true,
+        totalQuestions: true,
+        completedAt: true,
+      },
+    });
+    return {
+      lessonId,
+      title: config.title,
+      questions: config.questions.map(
+        ({ correctOptionId: _correctOptionId, ...question }) => question,
+      ),
+      completedResult,
+    };
+  }
+
+  async submitLessonQuiz(
+    user: User,
+    lessonId: string,
+    answers: Array<{ questionId: string; selectedOptionId: string }>,
+  ) {
+    const lesson = await this.assertCanAccessLesson(user, lessonId);
+    await this.assertLessonIsUnlocked(user, lesson);
+    const config = this.lessonQuizConfigFor(lesson.quizConfig);
+    const progress = await this.prisma.lessonProgress.findUnique({
+      where: { userId_lessonId: { userId: user.id, lessonId } },
+    });
+    const requiredSeconds = this.requiredWatchSeconds(user, lesson);
+    if ((progress?.watchedSeconds ?? 0) < requiredSeconds) {
+      throw new ForbiddenException(
+        'Cumpra o tempo mínimo da aula antes de responder ao quiz.',
+      );
+    }
+
+    const submittedAnswers = new Map(
+      answers.map((answer) => [answer.questionId, answer.selectedOptionId]),
+    );
+    if (
+      submittedAnswers.size !== config.questions.length ||
+      answers.length !== config.questions.length
+    ) {
+      throw new BadRequestException('Responda todas as perguntas do quiz.');
+    }
+
+    let finalScore = 0;
+    let correctAnswers = 0;
+    const gradedAnswers = config.questions.map((question) => {
+      const selectedOptionId = submittedAnswers.get(question.id);
+      if (
+        !selectedOptionId ||
+        !question.options.some((option) => option.id === selectedOptionId)
+      ) {
+        throw new BadRequestException('Uma resposta do quiz é inválida.');
+      }
+      const correct = selectedOptionId === question.correctOptionId;
+      const awardedPoints = correct ? (question.basePoints ?? 100) : 0;
+      if (correct) {
+        correctAnswers += 1;
+        finalScore += awardedPoints;
+      }
+      return {
+        questionId: question.id,
+        selectedOptionId,
+        correct,
+        awardedPoints,
+      };
+    });
+
+    return this.prisma.lessonQuizResult.upsert({
+      where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
+      update: {
+        finalScore,
+        correctAnswers,
+        totalQuestions: config.questions.length,
+        metrics: {
+          answers: gradedAnswers,
+          wrongQuestionIds: gradedAnswers
+            .filter((answer) => !answer.correct)
+            .map((answer) => answer.questionId),
+        },
+        completedAt: new Date(),
+      },
+      create: {
+        employeeId: user.id,
+        lessonId,
+        finalScore,
+        correctAnswers,
+        totalQuestions: config.questions.length,
+        metrics: {
+          answers: gradedAnswers,
+          wrongQuestionIds: gradedAnswers
+            .filter((answer) => !answer.correct)
+            .map((answer) => answer.questionId),
+        },
+      },
+    });
+  }
+
+  async getLessonNote(user: User, lessonId: string) {
+    await this.assertCanAccessLesson(user, lessonId);
+    const note = await this.prisma.lessonNote.findUnique({
+      where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
+      select: { content: true, updatedAt: true },
+    });
+    return {
+      lessonId,
+      content: note?.content ?? '',
+      updatedAt: note?.updatedAt.toISOString() ?? null,
+    };
+  }
+
+  async saveLessonNote(user: User, lessonId: string, content: string) {
+    await this.assertCanAccessLesson(user, lessonId);
+    const note = await this.prisma.lessonNote.upsert({
+      where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
+      update: { content },
+      create: { employeeId: user.id, lessonId, content },
+      select: { content: true, updatedAt: true },
+    });
+    return {
+      lessonId,
+      content: note.content,
+      updatedAt: note.updatedAt.toISOString(),
+    };
   }
 
   // ==========================================
@@ -140,6 +314,7 @@ export class ContentService {
                 contentUrl: lesson.contentUrl || '',
                 duration: Number(lesson.duration) || 0,
                 minimumWatchSeconds: this.minimumWatchSecondsFor(lesson),
+                quizConfig: lesson.quizConfig ?? undefined,
                 order: lessonIndex,
                 attachments: {
                   create: lesson.attachments?.map((att) => ({
@@ -186,9 +361,47 @@ export class ContentService {
 
   // 🚀 NOVA FUNÇÃO: Busca tudo o que o aluno já assistiu
   async getUserProgressAll(user: User) {
-    return this.prisma.lessonProgress.findMany({
+    const progressRows = await this.prisma.lessonProgress.findMany({
       where: { userId: user.id },
     });
+    if (user.role !== Role.USER) return progressRows;
+
+    const lessons = await this.prisma.lesson.findMany({
+      where: { id: { in: progressRows.map(({ lessonId }) => lessonId) } },
+      select: { id: true, quizConfig: true },
+    });
+    const quizConfigByLessonId = new Map(
+      lessons.map((lesson) => [lesson.id, lesson.quizConfig]),
+    );
+
+    const quizLessonIds = progressRows
+      .filter(({ lessonId }) =>
+        this.hasLessonQuiz(quizConfigByLessonId.get(lessonId) ?? null),
+      )
+      .map(({ lessonId }) => lessonId);
+    const quizResults =
+      quizLessonIds.length > 0
+        ? await this.prisma.lessonQuizResult.findMany({
+            where: {
+              employeeId: user.id,
+              lessonId: { in: quizLessonIds },
+            },
+            select: { lessonId: true },
+          })
+        : [];
+    const completedQuizLessonIds = new Set(
+      quizResults.map(({ lessonId }) => lessonId),
+    );
+
+    return progressRows.map((progress) => ({
+      ...progress,
+      isCompleted:
+        progress.isCompleted &&
+        (!this.hasLessonQuiz(
+          quizConfigByLessonId.get(progress.lessonId) ?? null,
+        ) ||
+          completedQuizLessonIds.has(progress.lessonId)),
+    }));
   }
 
   async getFullCourse(user: User, courseId: string) {
@@ -259,9 +472,12 @@ export class ContentService {
 
     const path = join(uploadsRootPath(), filename);
     if (!existsSync(path)) {
-      throw new NotFoundException('O arquivo deste material não está disponível.');
+      throw new NotFoundException(
+        'O arquivo deste material não está disponível.',
+      );
     }
-    const title = lesson.attachments[0]?.title?.trim() || lesson.title.trim() || 'material';
+    const title =
+      lesson.attachments[0]?.title?.trim() || lesson.title.trim() || 'material';
     const safeTitle = title.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-');
     return {
       path,
@@ -323,6 +539,7 @@ export class ContentService {
                           duration: Number(lesson.duration) || 0,
                           minimumWatchSeconds:
                             this.minimumWatchSecondsFor(lesson),
+                          quizConfig: lesson.quizConfig ?? undefined,
                           order: lessonIndex,
                           attachments: {
                             create: lesson.attachments?.map((att: any) => ({
@@ -364,6 +581,7 @@ export class ContentService {
                               duration: Number(lesson.duration) || 0,
                               minimumWatchSeconds:
                                 this.minimumWatchSecondsFor(lesson),
+                              quizConfig: lesson.quizConfig ?? undefined,
                               order: lessonIndex,
                               attachments: {
                                 create: lesson.attachments?.map((att: any) => ({
@@ -380,6 +598,7 @@ export class ContentService {
                               duration: Number(lesson.duration) || 0,
                               minimumWatchSeconds:
                                 this.minimumWatchSecondsFor(lesson),
+                              quizConfig: lesson.quizConfig ?? undefined,
                               order: lessonIndex,
                               attachments: {
                                 deleteMany: { id: { notIn: incomingAttIds } },
@@ -449,6 +668,7 @@ export class ContentService {
         type: true,
         duration: true,
         minimumWatchSeconds: true,
+        quizConfig: true,
         module: {
           select: {
             course: {
@@ -460,7 +680,7 @@ export class ContentService {
                     gameType: true,
                     lessons: {
                       orderBy: { order: 'asc' },
-                      select: { id: true },
+                      select: { id: true, quizConfig: true },
                     },
                   },
                 },
@@ -478,10 +698,7 @@ export class ContentService {
     return lesson;
   }
 
-  private async assertLessonIsUnlocked(
-    user: User,
-    lesson: AccessibleLesson,
-  ) {
+  private async assertLessonIsUnlocked(user: User, lesson: AccessibleLesson) {
     if (user.role !== Role.USER) return;
 
     const orderedLessons = lesson.module.course.modules.flatMap(
@@ -497,17 +714,33 @@ export class ContentService {
     if (lessonIndex <= 0) return;
 
     const previousLesson = orderedLessons[lessonIndex - 1];
-    const previousProgress = await this.prisma.lessonProgress.findUnique({
-      where: {
-        userId_lessonId: {
-          userId: user.id,
-          lessonId: previousLesson.id,
+    const [previousProgress, previousQuizResult] = await Promise.all([
+      this.prisma.lessonProgress.findUnique({
+        where: {
+          userId_lessonId: {
+            userId: user.id,
+            lessonId: previousLesson.id,
+          },
         },
-      },
-      select: { isCompleted: true },
-    });
+        select: { isCompleted: true },
+      }),
+      this.hasLessonQuiz(previousLesson.quizConfig)
+        ? this.prisma.lessonQuizResult.findUnique({
+            where: {
+              employeeId_lessonId: {
+                employeeId: user.id,
+                lessonId: previousLesson.id,
+              },
+            },
+            select: { id: true },
+          })
+        : Promise.resolve(null),
+    ]);
 
-    if (!previousProgress?.isCompleted) {
+    if (
+      !previousProgress?.isCompleted ||
+      (this.hasLessonQuiz(previousLesson.quizConfig) && !previousQuizResult)
+    ) {
       throw new ForbiddenException({
         code: 'PREVIOUS_LESSON_NOT_COMPLETED',
         message: 'Conclua a aula anterior antes de avançar.',
@@ -581,12 +814,16 @@ export class ContentService {
       updatedAt: Date;
     } | null,
     minimumWatchSeconds: number,
+    quizRequired = false,
+    quizCompleted = true,
   ) {
     const watchedSeconds = progress?.watchedSeconds ?? 0;
     const remainingSeconds = Math.max(
       0,
       Math.ceil(minimumWatchSeconds - watchedSeconds),
     );
+    const isCompleted =
+      progress?.isCompleted === true && (!quizRequired || quizCompleted);
 
     return {
       ...(progress ?? {
@@ -594,9 +831,70 @@ export class ContentService {
         watchedSeconds: 0,
         isCompleted: false,
       }),
+      isCompleted,
       minimumWatchSeconds,
       remainingSeconds,
-      canComplete: progress?.isCompleted === true || remainingSeconds === 0,
+      quizRequired,
+      quizCompleted,
+      canComplete: isCompleted || remainingSeconds === 0,
+    };
+  }
+
+  private hasLessonQuiz(config: Prisma.JsonValue | null) {
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      return false;
+    }
+    return Array.isArray((config as Prisma.JsonObject).questions);
+  }
+
+  private lessonQuizConfigFor(config: Prisma.JsonValue | null) {
+    if (!this.hasLessonQuiz(config)) {
+      throw new NotFoundException('Esta aula não possui quiz configurado.');
+    }
+    const raw = config as Prisma.JsonObject;
+    const questions = (raw.questions as Prisma.JsonArray).map((item) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw new BadRequestException('Configuração de quiz inválida.');
+      }
+      const question = item as Prisma.JsonObject;
+      const options = Array.isArray(question.options)
+        ? question.options.map((optionItem) => {
+            if (
+              !optionItem ||
+              typeof optionItem !== 'object' ||
+              Array.isArray(optionItem)
+            ) {
+              throw new BadRequestException('Alternativa de quiz inválida.');
+            }
+            const option = optionItem as Prisma.JsonObject;
+            return {
+              id: String(option.id ?? ''),
+              label: String(option.label ?? ''),
+            };
+          })
+        : [];
+      const parsed = {
+        id: String(question.id ?? ''),
+        prompt: String(question.prompt ?? ''),
+        correctOptionId: String(question.correctOptionId ?? ''),
+        basePoints: Number(question.basePoints ?? 100),
+        feedback:
+          typeof question.feedback === 'string' ? question.feedback : undefined,
+        options,
+      };
+      if (
+        !parsed.id ||
+        !parsed.prompt ||
+        !parsed.correctOptionId ||
+        parsed.options.length < 2
+      ) {
+        throw new BadRequestException('Configuração de quiz incompleta.');
+      }
+      return parsed;
+    });
+    return {
+      title: typeof raw.title === 'string' ? raw.title : 'Quiz da aula',
+      questions,
     };
   }
 

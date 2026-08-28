@@ -16,7 +16,19 @@ const average = (values: number[]) =>
     ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
     : 0;
 
-function statusFor(started: boolean, completed: number, total: number): ProgressStatus {
+const hasLessonQuiz = (config: unknown) =>
+  Boolean(
+    config &&
+    typeof config === 'object' &&
+    !Array.isArray(config) &&
+    Array.isArray((config as { questions?: unknown }).questions),
+  );
+
+function statusFor(
+  started: boolean,
+  completed: number,
+  total: number,
+): ProgressStatus {
   if (total > 0 && completed === total) return 'COMPLETED';
   if (started || completed > 0) return 'IN_PROGRESS';
   return 'NOT_STARTED';
@@ -73,7 +85,10 @@ export class ReportsService {
     }));
   }
 
-  async buildCourseReport(manager: User, courseId: string): Promise<CourseProgressReport> {
+  async buildCourseReport(
+    manager: User,
+    courseId: string,
+  ): Promise<CourseProgressReport> {
     const course = await this.prisma.course.findFirst({
       where: {
         id: courseId,
@@ -182,19 +197,83 @@ export class ReportsService {
             },
           })
         : [];
+    const lessonQuizResults =
+      lessonIds.length > 0 && userIds.length > 0
+        ? await this.prisma.lessonQuizResult.findMany({
+            where: {
+              employeeId: { in: userIds },
+              lessonId: { in: lessonIds },
+            },
+            select: {
+              employeeId: true,
+              lessonId: true,
+              finalScore: true,
+              correctAnswers: true,
+              totalQuestions: true,
+              completedAt: true,
+            },
+          })
+        : [];
 
     const progressByUserAndLesson = new Map(
       progressRows.map((row) => [`${row.userId}:${row.lessonId}`, row]),
     );
+    const quizResultByUserAndLesson = new Map(
+      lessonQuizResults.map((result) => [
+        `${result.employeeId}:${result.lessonId}`,
+        result,
+      ]),
+    );
+    const lessonById = new Map(
+      course.modules.flatMap((module) =>
+        module.lessons.map((lesson) => [lesson.id, lesson] as const),
+      ),
+    );
+    const completedFor = (userId: string, lessonId: string) => {
+      const progress = progressByUserAndLesson.get(`${userId}:${lessonId}`);
+      const lesson = lessonById.get(lessonId);
+      return Boolean(
+        progress?.isCompleted &&
+        (!hasLessonQuiz(lesson?.quizConfig) ||
+          quizResultByUserAndLesson.has(`${userId}:${lessonId}`)),
+      );
+    };
 
     const collaborators: CollaboratorReport[] = accesses.map(({ user }) => {
       const userRows = progressRows.filter((row) => row.userId === user.id);
-      const completedLessons = userRows.filter((row) => row.isCompleted).length;
+      const completedLessons = userRows.filter((row) =>
+        completedFor(user.id, row.lessonId),
+      ).length;
       const modules = course.modules.map((module) => {
         const rows = module.lessons
-          .map((lesson) => progressByUserAndLesson.get(`${user.id}:${lesson.id}`))
+          .map((lesson) =>
+            progressByUserAndLesson.get(`${user.id}:${lesson.id}`),
+          )
           .filter((row) => row !== undefined);
-        const completed = rows.filter((row) => row.isCompleted).length;
+        const completed = rows.filter((row) =>
+          completedFor(user.id, row.lessonId),
+        ).length;
+        const lessonQuizzes = module.lessons.flatMap((lesson) => {
+          const result = quizResultByUserAndLesson.get(
+            `${user.id}:${lesson.id}`,
+          );
+          return result
+            ? [
+                {
+                  lessonId: lesson.id,
+                  lessonTitle: lesson.title,
+                  finalScore: result.finalScore,
+                  correctAnswers: result.correctAnswers,
+                  totalQuestions: result.totalQuestions,
+                  percentage: percent(
+                    result.correctAnswers,
+                    result.totalQuestions,
+                  ),
+                  completedAt: result.completedAt.toISOString(),
+                },
+              ]
+            : [];
+        });
         return {
           moduleId: module.id,
           title: module.title,
@@ -202,6 +281,7 @@ export class ReportsService {
           totalLessons: module.lessons.length,
           progress: percent(completed, module.lessons.length),
           status: statusFor(rows.length > 0, completed, module.lessons.length),
+          lessonQuizzes,
           evaluation: (() => {
             const result = gameResults.find(
               (item) =>
@@ -219,7 +299,8 @@ export class ReportsService {
         };
       });
       const lastActivity = userRows.reduce<Date | null>(
-        (latest, row) => (!latest || row.updatedAt > latest ? row.updatedAt : latest),
+        (latest, row) =>
+          !latest || row.updatedAt > latest ? row.updatedAt : latest,
         null,
       );
 
@@ -228,7 +309,11 @@ export class ReportsService {
         completedLessons,
         totalLessons: lessonIds.length,
         overallProgress: percent(completedLessons, lessonIds.length),
-        status: statusFor(userRows.length > 0, completedLessons, lessonIds.length),
+        status: statusFor(
+          userRows.length > 0,
+          completedLessons,
+          lessonIds.length,
+        ),
         lastActivity: lastActivity?.toISOString() ?? null,
         modules,
       };
@@ -241,7 +326,12 @@ export class ReportsService {
             progressByUserAndLesson.get(`${access.userId}:${lesson.id}`),
           )
           .filter((row) => row !== undefined);
-        const completedCount = rows.filter((row) => row.isCompleted).length;
+        const completedCount = rows.filter((row) =>
+          completedFor(row.userId, lesson.id),
+        ).length;
+        const quizResults = lessonQuizResults.filter(
+          (result) => result.lessonId === lesson.id,
+        );
         return {
           id: lesson.id,
           title: lesson.title.trim() || `Aula ${lessonIndex + 1}`,
@@ -251,6 +341,14 @@ export class ReportsService {
           startedCount: rows.length,
           completedCount,
           completionRate: percent(completedCount, accesses.length),
+          quizConfigured: hasLessonQuiz(lesson.quizConfig),
+          quizCompletedCount: quizResults.length,
+          quizParticipationRate: percent(quizResults.length, accesses.length),
+          averageQuizScore: average(
+            quizResults.map((result) =>
+              percent(result.correctAnswers, result.totalQuestions),
+            ),
+          ),
         };
       });
       const totalPossible = module.lessons.length * accesses.length;
@@ -280,7 +378,10 @@ export class ReportsService {
               return {
                 gameType: module.gameType,
                 completedCount: results.length,
-                participationRate: percent(results.length, collaborators.length),
+                participationRate: percent(
+                  results.length,
+                  collaborators.length,
+                ),
                 averageScore: average(
                   results.map((result) => result.finalScore),
                 ),
@@ -304,7 +405,15 @@ export class ReportsService {
       collaborators.map((collaborator) => collaborator.overallProgress),
     );
     const configuredModules = modules.filter((module) => module.evaluation);
-    const expectedEvaluations = configuredModules.length * collaborators.length;
+    const configuredLessonQuizzes = modules.reduce(
+      (total, module) =>
+        total + module.lessons.filter((lesson) => lesson.quizConfigured).length,
+      0,
+    );
+    const configuredEvaluations =
+      configuredModules.length + configuredLessonQuizzes;
+    const completedEvaluations = gameResults.length + lessonQuizResults.length;
+    const expectedEvaluations = configuredEvaluations * collaborators.length;
 
     return {
       generatedAt: new Date().toISOString(),
@@ -326,18 +435,24 @@ export class ReportsService {
         totalLessons: lessonIds.length,
         totalEstimatedMinutes: course.modules.reduce(
           (total, module) =>
-            total + module.lessons.reduce((sum, lesson) => sum + lesson.duration, 0),
+            total +
+            module.lessons.reduce((sum, lesson) => sum + lesson.duration, 0),
           0,
         ),
-        evaluationsConfigured: configuredModules.length,
-        evaluationsCompleted: gameResults.length,
+        evaluationsConfigured: configuredEvaluations,
+        evaluationsCompleted: completedEvaluations,
         evaluationParticipationRate: percent(
-          gameResults.length,
+          completedEvaluations,
           expectedEvaluations,
         ),
-        averageEvaluationScore: average(
-          gameResults.map((result) => result.finalScore),
-        ),
+        averageEvaluationScore:
+          lessonQuizResults.length > 0
+            ? average(
+                lessonQuizResults.map((result) =>
+                  percent(result.correctAnswers, result.totalQuestions),
+                ),
+              )
+            : average(gameResults.map((result) => result.finalScore)),
       },
       modules,
       collaborators,
@@ -346,7 +461,7 @@ export class ReportsService {
         modules,
         collaboratorsStarted,
         averageProgress,
-        gameResults.length,
+        completedEvaluations,
         expectedEvaluations,
       ),
     };

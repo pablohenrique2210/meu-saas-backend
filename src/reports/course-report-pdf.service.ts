@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
-import type { CourseProgressReport, ProgressStatus } from './course-report.types';
+import type {
+  CourseProgressReport,
+  ProgressStatus,
+} from './course-report.types';
 
 const COLORS = {
   wine: '#641C32',
@@ -38,7 +41,8 @@ export class CourseReportPdfService {
         info: {
           Title: `Diagnóstico de aprendizagem e desempenho - ${report.course.title}`,
           Author: 'Lilian Arruda',
-          Subject: 'Relatório de progresso e desempenho nas avaliações por módulo',
+          Subject:
+            'Relatório de progresso e desempenho nas avaliações por módulo',
         },
       });
       const chunks: Buffer[] = [];
@@ -68,7 +72,9 @@ export class CourseReportPdfService {
       .font('Helvetica')
       .fontSize(11)
       .fillColor('#E8CED6')
-      .text('DIAGNÓSTICO DE APRENDIZAGEM E DESEMPENHO', 42, 84, { characterSpacing: 1.1 });
+      .text('DIAGNÓSTICO DE APRENDIZAGEM E DESEMPENHO', 42, 84, {
+        characterSpacing: 1.1,
+      });
     doc
       .font('Helvetica-Bold')
       .fontSize(29)
@@ -85,7 +91,11 @@ export class CourseReportPdfService {
       );
 
     doc.y = 238;
-    this.sectionTitle(doc, 'Visão executiva', 'Progresso consolidado do programa');
+    this.sectionTitle(
+      doc,
+      'Visão executiva',
+      'Progresso consolidado do programa',
+    );
     const cardY = doc.y + 4;
     const cards = [
       ['Progresso médio', `${report.summary.averageProgress}%`],
@@ -113,7 +123,11 @@ export class CourseReportPdfService {
     });
 
     doc.y = cardY + 94;
-    this.sectionTitle(doc, 'Progresso por módulo', 'Percentual médio de aulas concluídas');
+    this.sectionTitle(
+      doc,
+      'Progresso por módulo',
+      'Percentual médio de aulas concluídas',
+    );
     doc.y += 10;
     report.modules.forEach((module, index) => {
       this.ensureSpace(doc, 26);
@@ -122,19 +136,29 @@ export class CourseReportPdfService {
         .font('Helvetica-Bold')
         .fontSize(9)
         .fillColor(COLORS.ink)
-        .text(`${index + 1}. ${module.title}`, 42, y, { width: 310, ellipsis: true });
+        .text(`${index + 1}. ${module.title}`, 42, y, {
+          width: 310,
+          ellipsis: true,
+        });
       doc
         .font('Helvetica-Bold')
         .fontSize(9)
         .fillColor(COLORS.wine)
-        .text(`${module.averageProgress}%`, 500, y, { width: 50, align: 'right' });
+        .text(`${module.averageProgress}%`, 500, y, {
+          width: 50,
+          align: 'right',
+        });
       this.progressBar(doc, 42, y + 13, 508, module.averageProgress, 7);
       doc.y = y + 24;
     });
 
     this.ensureSpace(doc, 118);
     doc.y += 5;
-    this.sectionTitle(doc, 'Leitura do diagnóstico', 'Sinais que merecem atenção do RH');
+    this.sectionTitle(
+      doc,
+      'Leitura do diagnóstico',
+      'Sinais que merecem atenção do RH',
+    );
     doc.y += 8;
     report.insights.forEach((insight) => {
       const y = doc.y;
@@ -148,7 +172,10 @@ export class CourseReportPdfService {
     });
   }
 
-  private drawModuleAnalysis(doc: PDFKit.PDFDocument, report: CourseProgressReport) {
+  private drawModuleAnalysis(
+    doc: PDFKit.PDFDocument,
+    report: CourseProgressReport,
+  ) {
     doc.addPage();
     this.pageHeading(doc, 'Análise por módulo e aula', report.course.title);
 
@@ -169,7 +196,11 @@ export class CourseReportPdfService {
         .font('Helvetica')
         .fontSize(8.5)
         .fillColor(COLORS.muted)
-        .text(`${module.totalLessons} aula${module.totalLessons === 1 ? '' : 's'}`, 56, startY + 33);
+        .text(
+          `${module.totalLessons} aula${module.totalLessons === 1 ? '' : 's'}`,
+          56,
+          startY + 33,
+        );
       doc
         .font('Helvetica-Bold')
         .fontSize(18)
@@ -215,7 +246,10 @@ export class CourseReportPdfService {
     });
   }
 
-  private drawCollaborators(doc: PDFKit.PDFDocument, report: CourseProgressReport) {
+  private drawCollaborators(
+    doc: PDFKit.PDFDocument,
+    report: CourseProgressReport,
+  ) {
     doc.addPage();
     this.pageHeading(doc, 'Progresso por colaborador', report.course.title);
 
@@ -240,14 +274,18 @@ export class CourseReportPdfService {
         .font('Helvetica-Bold')
         .fontSize(12)
         .fillColor(COLORS.ink)
-        .text(collaborator.name, 58, startY + 16, { width: 325, ellipsis: true });
+        .text(collaborator.name, 58, startY + 16, {
+          width: 325,
+          ellipsis: true,
+        });
       doc
         .font('Helvetica')
         .fontSize(8.5)
         .fillColor(COLORS.muted)
         .text(
-          [collaborator.position, collaborator.department].filter(Boolean).join(' • ') ||
-            'Cargo e departamento não informados',
+          [collaborator.position, collaborator.department]
+            .filter(Boolean)
+            .join(' • ') || 'Cargo e departamento não informados',
           58,
           startY + 36,
           { width: 325, ellipsis: true },
@@ -262,11 +300,16 @@ export class CourseReportPdfService {
         .font('Helvetica-Bold')
         .fontSize(8)
         .fillColor(statusColor)
-        .text(statusLabel[collaborator.status].toUpperCase(), 395, startY + 18, {
-          width: 137,
-          align: 'right',
-          characterSpacing: 0.5,
-        });
+        .text(
+          statusLabel[collaborator.status].toUpperCase(),
+          395,
+          startY + 18,
+          {
+            width: 137,
+            align: 'right',
+            characterSpacing: 0.5,
+          },
+        );
       doc
         .font('Helvetica-Bold')
         .fontSize(18)
@@ -286,7 +329,8 @@ export class CourseReportPdfService {
         const y = doc.y;
         const moduleHasEvaluation = report.modules.some(
           (reportModule) =>
-            reportModule.id === module.moduleId && Boolean(reportModule.evaluation),
+            reportModule.id === module.moduleId &&
+            Boolean(reportModule.evaluation),
         );
         doc
           .font('Helvetica')
@@ -323,7 +367,10 @@ export class CourseReportPdfService {
           .font('Helvetica-Bold')
           .fontSize(8.2)
           .fillColor(COLORS.wine)
-          .text(`${module.progress}%`, 492, y - 1, { width: 40, align: 'right' });
+          .text(`${module.progress}%`, 492, y - 1, {
+            width: 40,
+            align: 'right',
+          });
         doc.y = y + 30;
       });
       doc.y = startY + cardHeight + 14;
@@ -345,21 +392,45 @@ export class CourseReportPdfService {
       ['Avaliações configuradas', String(report.summary.evaluationsConfigured)],
       ['Resultados recebidos', String(report.summary.evaluationsCompleted)],
       ['Participação', `${report.summary.evaluationParticipationRate}%`],
-      ['Pontuação média', `${report.summary.averageEvaluationScore} pts`],
+      ['Aproveitamento médio', `${report.summary.averageEvaluationScore}%`],
     ];
     const cardY = doc.y;
     cards.forEach(([label, value], index) => {
       const width = 119;
       const x = 42 + index * 128;
       doc.roundedRect(x, cardY, width, 76, 12).fill(COLORS.blush);
-      doc.font('Helvetica-Bold').fontSize(18).fillColor(COLORS.wine).text(value, x + 12, cardY + 14, { width: width - 24 });
-      doc.font('Helvetica').fontSize(7.7).fillColor(COLORS.muted).text(label.toUpperCase(), x + 12, cardY + 48, { width: width - 24, characterSpacing: 0.35 });
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(18)
+        .fillColor(COLORS.wine)
+        .text(value, x + 12, cardY + 14, { width: width - 24 });
+      doc
+        .font('Helvetica')
+        .fontSize(7.7)
+        .fillColor(COLORS.muted)
+        .text(label.toUpperCase(), x + 12, cardY + 48, {
+          width: width - 24,
+          characterSpacing: 0.35,
+        });
     });
     doc.y = cardY + 100;
 
     const configured = report.modules.filter((module) => module.evaluation);
-    if (configured.length === 0) {
-      doc.font('Helvetica').fontSize(10).fillColor(COLORS.muted).text('Ainda não existem avaliações configuradas nos módulos deste curso.', 42, doc.y + 12);
+    const configuredLessonQuizzes = report.modules.flatMap((module) =>
+      module.lessons
+        .filter((lesson) => lesson.quizConfigured)
+        .map((lesson) => ({ moduleTitle: module.title, lesson })),
+    );
+    if (configured.length === 0 && configuredLessonQuizzes.length === 0) {
+      doc
+        .font('Helvetica')
+        .fontSize(10)
+        .fillColor(COLORS.muted)
+        .text(
+          'Ainda não existem avaliações configuradas nos módulos deste curso.',
+          42,
+          doc.y + 12,
+        );
       return;
     }
 
@@ -367,22 +438,100 @@ export class CourseReportPdfService {
       const evaluation = module.evaluation!;
       this.ensureSpace(doc, 92);
       const y = doc.y;
-      doc.roundedRect(42, y, 508, 78, 12).lineWidth(1).fillAndStroke(COLORS.white, COLORS.border);
-      doc.font('Helvetica-Bold').fontSize(11).fillColor(COLORS.ink).text(`${index + 1}. ${module.title}`, 56, y + 13, { width: 285, ellipsis: true });
-      doc.font('Helvetica').fontSize(8).fillColor(COLORS.muted).text(gameLabel[evaluation.gameType], 56, y + 33, { width: 285 });
-      doc.font('Helvetica-Bold').fontSize(8).fillColor(COLORS.wine).text(`${evaluation.completedCount} resultado(s)`, 365, y + 15, { width: 165, align: 'right' });
-      doc.font('Helvetica').fontSize(8).fillColor(COLORS.muted).text(`Média: ${evaluation.averageScore} pts | Tempo: ${this.formatDuration(evaluation.averageTimeSpentSeconds)}`, 330, y + 35, { width: 200, align: 'right' });
+      doc
+        .roundedRect(42, y, 508, 78, 12)
+        .lineWidth(1)
+        .fillAndStroke(COLORS.white, COLORS.border);
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(11)
+        .fillColor(COLORS.ink)
+        .text(`${index + 1}. ${module.title}`, 56, y + 13, {
+          width: 285,
+          ellipsis: true,
+        });
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor(COLORS.muted)
+        .text(gameLabel[evaluation.gameType], 56, y + 33, { width: 285 });
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(8)
+        .fillColor(COLORS.wine)
+        .text(`${evaluation.completedCount} resultado(s)`, 365, y + 15, {
+          width: 165,
+          align: 'right',
+        });
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor(COLORS.muted)
+        .text(
+          `Média: ${evaluation.averageScore} pts | Tempo: ${this.formatDuration(evaluation.averageTimeSpentSeconds)}`,
+          330,
+          y + 35,
+          { width: 200, align: 'right' },
+        );
       this.progressBar(doc, 56, y + 57, 474, evaluation.participationRate, 7);
       doc.y = y + 92;
     });
+
+    if (configuredLessonQuizzes.length > 0) {
+      this.ensureSpace(doc, 54);
+      this.sectionTitle(
+        doc,
+        'Quizzes ao final das aulas',
+        'Aproveitamento objetivo registrado imediatamente para o RH.',
+      );
+      configuredLessonQuizzes.forEach(({ moduleTitle, lesson }, index) => {
+        this.ensureSpace(doc, 82);
+        const y = doc.y;
+        doc
+          .roundedRect(42, y, 508, 68, 12)
+          .lineWidth(1)
+          .fillAndStroke(COLORS.white, COLORS.border);
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(10)
+          .fillColor(COLORS.ink)
+          .text(`${index + 1}. ${lesson.title}`, 56, y + 12, {
+            width: 285,
+            ellipsis: true,
+          });
+        doc
+          .font('Helvetica')
+          .fontSize(7.8)
+          .fillColor(COLORS.muted)
+          .text(moduleTitle, 56, y + 31, { width: 285, ellipsis: true });
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(8)
+          .fillColor(COLORS.wine)
+          .text(
+            `${lesson.quizCompletedCount} resultado(s) • média ${lesson.averageQuizScore}%`,
+            340,
+            y + 14,
+            { width: 190, align: 'right' },
+          );
+        this.progressBar(doc, 56, y + 50, 474, lesson.quizParticipationRate, 7);
+        doc.y = y + 82;
+      });
+    }
   }
 
-  private pageHeading(doc: PDFKit.PDFDocument, title: string, subtitle: string) {
+  private pageHeading(
+    doc: PDFKit.PDFDocument,
+    title: string,
+    subtitle: string,
+  ) {
     doc
       .font('Helvetica-Bold')
       .fontSize(9)
       .fillColor(COLORS.wine)
-      .text('DIAGNÓSTICO DE APRENDIZAGEM E DESEMPENHO', 42, 42, { characterSpacing: 0.9 });
+      .text('DIAGNÓSTICO DE APRENDIZAGEM E DESEMPENHO', 42, 42, {
+        characterSpacing: 0.9,
+      });
     doc
       .font('Helvetica-Bold')
       .fontSize(23)
@@ -393,15 +542,15 @@ export class CourseReportPdfService {
       .fontSize(9.5)
       .fillColor(COLORS.muted)
       .text(subtitle, 42, 101, { width: 508, ellipsis: true });
-    doc
-      .moveTo(42, 124)
-      .lineTo(550, 124)
-      .strokeColor(COLORS.border)
-      .stroke();
+    doc.moveTo(42, 124).lineTo(550, 124).strokeColor(COLORS.border).stroke();
     doc.y = 146;
   }
 
-  private sectionTitle(doc: PDFKit.PDFDocument, title: string, subtitle: string) {
+  private sectionTitle(
+    doc: PDFKit.PDFDocument,
+    title: string,
+    subtitle: string,
+  ) {
     const y = doc.y;
     doc
       .font('Helvetica-Bold')
@@ -428,7 +577,13 @@ export class CourseReportPdfService {
     doc.roundedRect(x, y, width, height, height / 2).fill(COLORS.border);
     if (safeValue > 0) {
       doc
-        .roundedRect(x, y, Math.max(height, (width * safeValue) / 100), height, height / 2)
+        .roundedRect(
+          x,
+          y,
+          Math.max(height, (width * safeValue) / 100),
+          height,
+          height / 2,
+        )
         .fill(COLORS.wineLight);
     }
   }
@@ -442,7 +597,11 @@ export class CourseReportPdfService {
 
   private addFooters(doc: PDFKit.PDFDocument, report: CourseProgressReport) {
     const range = doc.bufferedPageRange();
-    for (let index = range.start; index < range.start + range.count; index += 1) {
+    for (
+      let index = range.start;
+      index < range.start + range.count;
+      index += 1
+    ) {
       doc.switchToPage(index);
       doc
         .font('Helvetica')

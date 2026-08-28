@@ -94,6 +94,8 @@ model User {
   checkIns          CheckIn[]
   gameProgress      UserGameProgress[]
   moduleGameResults ModuleGameResult[]
+  lessonQuizResults LessonQuizResult[]
+  lessonNotes       LessonNote[]
   courseAccesses    UserCourseAccess[]
 }
 
@@ -260,10 +262,47 @@ model Lesson {
   minimumWatchSeconds Int        @default(0)
   order               Int        @default(0)
   isPublished         Boolean    @default(false)
+  quizConfig          Json?
 
-  module      Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  module      Module             @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   progress    UserProgress[]
   attachments Attachment[] // 👈 NOVO: Uma aula pode ter vários anexos!
+  quizResults LessonQuizResult[]
+  notes       LessonNote[]
+}
+
+model LessonNote {
+  id         String   @id @default(uuid())
+  employeeId String
+  lessonId   String
+  content    String   @default("")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  employee User   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, lessonId])
+  @@index([lessonId])
+}
+
+model LessonQuizResult {
+  id             String   @id @default(uuid())
+  employeeId     String
+  lessonId       String
+  finalScore     Int
+  correctAnswers Int
+  totalQuestions Int
+  metrics        Json
+  completedAt    DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  employee User   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, lessonId])
+  @@index([lessonId])
+  @@index([completedAt])
 }
 
 // 📎 NOVO: GESTÃO DE ARQUIVOS E LINKS
