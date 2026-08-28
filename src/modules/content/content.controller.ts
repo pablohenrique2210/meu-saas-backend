@@ -38,7 +38,9 @@ import { RhAccessGuard } from '../../auth/rh-access.guard';
 import { ContentService } from './content.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { UploadService } from './upload.service';
+import { AssetStorageService } from './asset-storage.service';
 import { issueUploadSessionToken } from '../../auth/upload-session-token';
+import { publicUploadUrl } from '../../config/storage';
 
 export class UpdateProgressDto {
   @IsString()
@@ -98,12 +100,57 @@ export class SaveLessonNoteDto {
   content: string;
 }
 
+export class DirectUploadSessionDto {
+  @IsString()
+  @MaxLength(255)
+  originalName: string;
+
+  @IsString()
+  @MaxLength(150)
+  mimeType: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(5 * 1024 * 1024 * 1024)
+  size: number;
+}
+
+export class CompleteDirectUploadDto {
+  @IsString()
+  @MaxLength(1024)
+  uploadId: string;
+
+  @IsString()
+  @Matches(/^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9]{1,12})?$/)
+  filename: string;
+
+  @IsString()
+  @MaxLength(255)
+  originalName: string;
+
+  @IsString()
+  @MaxLength(150)
+  mimeType: string;
+}
+
+export class AbortDirectUploadDto {
+  @IsString()
+  @MaxLength(1024)
+  uploadId: string;
+
+  @IsString()
+  @Matches(/^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9]{1,12})?$/)
+  filename: string;
+}
+
 @Controller('courses')
 @UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard)
 export class ContentController {
   constructor(
     private readonly contentService: ContentService,
     private readonly uploadService: UploadService,
+    private readonly assets: AssetStorageService,
   ) {}
 
   @Post('progress')
@@ -202,6 +249,42 @@ export class ContentController {
       uploadToken: issueUploadSessionToken(uploadId, user.id),
       expiresInSeconds: 2 * 60 * 60,
     };
+  }
+
+  @Post('upload/direct/session')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  createDirectUploadSession(@Body() dto: DirectUploadSessionDto) {
+    return this.assets.createDirectUpload(
+      dto.originalName,
+      dto.mimeType,
+      dto.size,
+    );
+  }
+
+  @Post('upload/direct/complete')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  async completeDirectUpload(@Body() dto: CompleteDirectUploadDto) {
+    await this.assets.completeDirectUpload(dto.filename, dto.uploadId);
+    return {
+      complete: true,
+      url: publicUploadUrl(dto.filename),
+      originalName: dto.originalName,
+      mimeType: dto.mimeType,
+      materialType: this.uploadService.materialTypeFor(
+        dto.mimeType,
+        dto.originalName,
+      ),
+    };
+  }
+
+  @Post('upload/direct/abort')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  async abortDirectUpload(@Body() dto: AbortDirectUploadDto) {
+    await this.assets.abortDirectUpload(dto.filename, dto.uploadId);
+    return { aborted: true };
   }
 
   @Get('materials/:filename/download')

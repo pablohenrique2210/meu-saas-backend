@@ -44,4 +44,14 @@ describe('AssetStorageService', () => {
     expect(asset.contentLength).toBe(4);
     expect(Buffer.concat(chunks).toString()).toBe('2345');
   });
+
+  it('explica quando um vídeo grande não possui bucket configurado', async () => {
+    await expect(
+      service.createDirectUpload('aula.mp4', 'video/mp4', 20 * 1024 * 1024),
+    ).rejects.toMatchObject({
+      response: {
+        code: 'OBJECT_STORAGE_NOT_CONFIGURED',
+      },
+    });
+  });
 });
