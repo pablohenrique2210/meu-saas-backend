@@ -10,12 +10,11 @@ import type {
   Prisma,
   User,
 } from '@prisma/client';
-import { existsSync } from 'node:fs';
-import { basename, extname, join } from 'node:path';
+import { basename, extname } from 'node:path';
 import { ModuleGameType } from '../../games/game-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
-import { uploadsRootPath } from '../../config/storage';
+import { AssetStorageService } from './asset-storage.service';
 
 type AccessibleLesson = {
   id: string;
@@ -36,7 +35,10 @@ type AccessibleLesson = {
 
 @Injectable()
 export class ContentService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly assets: AssetStorageService = new AssetStorageService(),
+  ) {}
 
   // ==========================================
   // 🍿 MOTOR DE PROGRESSO (NETFLIX STYLE)
@@ -441,12 +443,12 @@ export class ContentService {
     if (!filename || filename !== requestedFilename) {
       throw new BadRequestException('Nome de arquivo inválido.');
     }
-    const uploadedUrl = `/uploads/${filename}`;
+    const uploadedSuffix = `/${filename}`;
     const lesson = await this.prisma.lesson.findFirst({
       where: {
         OR: [
-          { contentUrl: { endsWith: uploadedUrl } },
-          { attachments: { some: { url: { endsWith: uploadedUrl } } } },
+          { contentUrl: { endsWith: uploadedSuffix } },
+          { attachments: { some: { url: { endsWith: uploadedSuffix } } } },
         ],
         ...(user.role === Role.ADMIN || user.role === Role.HR_MANAGER
           ? {}
@@ -460,7 +462,7 @@ export class ContentService {
         title: true,
         contentUrl: true,
         attachments: {
-          where: { url: { endsWith: uploadedUrl } },
+          where: { url: { endsWith: uploadedSuffix } },
           select: { title: true },
           take: 1,
         },
@@ -470,17 +472,12 @@ export class ContentService {
       throw new NotFoundException('Material não encontrado ou sem acesso.');
     }
 
-    const path = join(uploadsRootPath(), filename);
-    if (!existsSync(path)) {
-      throw new NotFoundException(
-        'O arquivo deste material não está disponível.',
-      );
-    }
+    const asset = await this.assets.open(filename);
     const title =
       lesson.attachments[0]?.title?.trim() || lesson.title.trim() || 'material';
     const safeTitle = title.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-');
     return {
-      path,
+      asset,
       downloadName: `${safeTitle}${extname(filename)}`,
     };
   }

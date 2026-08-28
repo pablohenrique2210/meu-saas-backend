@@ -27,8 +27,7 @@ import {
 } from 'class-validator';
 import { IsInt, Matches, Max, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
-import { diskStorage, memoryStorage } from 'multer';
-import { extname } from 'path';
+import { memoryStorage } from 'multer';
 import { randomUUID } from 'node:crypto';
 import { ClerkAuthGuard } from '../../auth/clerk-auth.guard';
 import { CurrentUser } from '../../auth/current-user.decorator';
@@ -38,7 +37,6 @@ import { RolesGuard } from '../../auth/roles.guard';
 import { RhAccessGuard } from '../../auth/rh-access.guard';
 import { ContentService } from './content.service';
 import { CreateCourseDto } from './dto/create-course.dto';
-import { ensureUploadsRootPath, publicUploadUrl } from '../../config/storage';
 import { UploadService } from './upload.service';
 import { issueUploadSessionToken } from '../../auth/upload-session-token';
 
@@ -170,38 +168,12 @@ export class ContentController {
   @Roles(Role.ADMIN, Role.HR_MANAGER)
   @UseInterceptors(
     FileInterceptor('file', {
-      limits: { fileSize: 2 * 1024 * 1024 * 1024 },
-      storage: diskStorage({
-        destination: (_request, _file, callback) => {
-          try {
-            callback(null, ensureUploadsRootPath());
-          } catch (error) {
-            callback(
-              error instanceof Error
-                ? error
-                : new Error('A pasta de uploads não está disponível.'),
-              '',
-            );
-          }
-        },
-        filename: (_request, file, callback) => {
-          const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-          callback(null, uniqueSuffix + extname(file.originalname));
-        },
-      }),
+      limits: { fileSize: 8 * 1024 * 1024 },
+      storage: memoryStorage(),
     }),
   )
   uploadFile(@UploadedFile() file: Express.Multer.File) {
-    if (!file) throw new BadRequestException('Nenhum arquivo foi recebido.');
-    return {
-      url: publicUploadUrl(file.filename),
-      originalName: file.originalname,
-      mimeType: file.mimetype,
-      materialType: this.uploadService.materialTypeFor(
-        file.mimetype,
-        file.originalname,
-      ),
-    };
+    return this.uploadService.storeFile(file);
   }
 
   @Post('upload/chunk')
@@ -242,7 +214,13 @@ export class ContentController {
       user,
       filename,
     );
-    response.download(material.path, material.downloadName);
+    response.setHeader('Content-Type', material.asset.contentType);
+    response.setHeader('Content-Length', String(material.asset.contentLength));
+    response.setHeader(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(material.downloadName)}`,
+    );
+    material.asset.body.pipe(response);
   }
 
   @Put(':id')

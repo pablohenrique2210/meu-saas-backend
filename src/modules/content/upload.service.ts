@@ -13,7 +13,9 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { ensureUploadsRootPath, publicUploadUrl } from '../../config/storage';
+import { AssetStorageService } from './asset-storage.service';
 
 export interface UploadChunkInput {
   uploadId: string;
@@ -25,6 +27,23 @@ export interface UploadChunkInput {
 
 @Injectable()
 export class UploadService {
+  constructor(
+    private readonly assets: AssetStorageService = new AssetStorageService(),
+  ) {}
+
+  async storeFile(file?: Express.Multer.File) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('Nenhum arquivo foi recebido.');
+    }
+    const safeExtension = extname(file.originalname)
+      .toLowerCase()
+      .replace(/[^.a-z0-9]/g, '')
+      .slice(0, 12);
+    const filename = `${randomUUID()}${safeExtension}`;
+    await this.assets.storeBuffer(filename, file.buffer, file.mimetype);
+    return this.completedResponse(filename, file.originalname, file.mimetype);
+  }
+
   async storeChunk(input: UploadChunkInput, chunk?: Express.Multer.File) {
     if (!chunk?.buffer?.length) {
       throw new BadRequestException('O bloco do arquivo não foi recebido.');
@@ -161,20 +180,27 @@ export class UploadService {
     }
   }
 
-  private completedUpload(
+  private async completedUpload(
     input: UploadChunkInput,
     chunk: Express.Multer.File,
     filename: string,
   ) {
+    const contentType = input.mimeType || chunk.mimetype;
+    await this.assets.persistLocalFile(filename, contentType);
+    return this.completedResponse(filename, input.originalName, contentType);
+  }
+
+  private completedResponse(
+    filename: string,
+    originalName: string,
+    mimeType: string,
+  ) {
     return {
       complete: true,
       url: publicUploadUrl(filename),
-      originalName: input.originalName,
-      mimeType: input.mimeType || chunk.mimetype,
-      materialType: this.materialTypeFor(
-        input.mimeType || chunk.mimetype,
-        input.originalName,
-      ),
+      originalName,
+      mimeType,
+      materialType: this.materialTypeFor(mimeType, originalName),
     };
   }
 

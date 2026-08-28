@@ -7,9 +7,11 @@ import { DatabaseUserGuard } from '../../auth/database-user.guard';
 import { RolesGuard } from '../../auth/roles.guard';
 import { RhAccessGuard } from '../../auth/rh-access.guard';
 import { UploadService } from './upload.service';
+import { AssetStorageService } from './asset-storage.service';
+import { MediaController } from './media.controller';
 
 @Module({
-  controllers: [ContentController],
+  controllers: [ContentController, MediaController],
   providers: [
     ContentService,
     PrismaService,
@@ -18,6 +20,7 @@ import { UploadService } from './upload.service';
     RolesGuard,
     RhAccessGuard,
     UploadService,
+    AssetStorageService,
   ],
 })
 export class ContentModule {}
