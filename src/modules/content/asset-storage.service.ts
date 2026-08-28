@@ -14,6 +14,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { createReadStream } from 'node:fs';
@@ -34,6 +35,8 @@ export interface StoredAsset {
 
 @Injectable()
 export class AssetStorageService {
+  private readonly logger = new Logger(AssetStorageService.name);
+
   async createDirectUpload(
     originalName: string,
     mimeType: string,
@@ -360,12 +363,9 @@ export class AssetStorageService {
     } catch (error) {
       const status = (error as { $metadata?: { httpStatusCode?: number } })
         .$metadata?.httpStatusCode;
-      throw new BadRequestException({
-        code: 'BUCKET_CORS_CONFIGURATION_FAILED',
-        message:
-          'O Bucket foi conectado, mas não aceitou a configuração de upload do navegador. Revise FRONTEND_URLS e as credenciais do Bucket.',
-        ...(status ? { storageStatus: status } : {}),
-      });
+      this.logger.warn(
+        `O Bucket recusou a atualização automática de CORS${status ? ` (HTTP ${status})` : ''}. O upload assinado continuará com a configuração atual do Bucket.`,
+      );
     }
   }
 
