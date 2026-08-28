@@ -34,6 +34,12 @@ describe('UploadService', () => {
     );
     expect(first.complete).toBe(false);
 
+    const repeatedFirstChunk = await service.storeChunk(
+      { ...input, chunkIndex: 0 },
+      { buffer: Buffer.from('primeiro-') } as Express.Multer.File,
+    );
+    expect(repeatedFirstChunk.complete).toBe(false);
+
     const completed = await service.storeChunk(
       { ...input, chunkIndex: 1 },
       { buffer: Buffer.from('segundo') } as Express.Multer.File,
@@ -42,6 +48,15 @@ describe('UploadService', () => {
     expect(completed.url).toMatch(/\/uploads\/.+\.mp4$/);
 
     const filename = basename(new URL(completed.url).pathname);
+    await expect(readFile(join(uploadsDir, filename), 'utf8')).resolves.toBe(
+      'primeiro-segundo',
+    );
+
+    const repeatedFinalChunk = await service.storeChunk(
+      { ...input, chunkIndex: 1 },
+      { buffer: Buffer.from('segundo') } as Express.Multer.File,
+    );
+    expect(repeatedFinalChunk).toEqual(completed);
     await expect(readFile(join(uploadsDir, filename), 'utf8')).resolves.toBe(
       'primeiro-segundo',
     );

@@ -3,7 +3,15 @@ import {
   Injectable,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { appendFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  access,
+  mkdir,
+  open,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { ensureUploadsRootPath, publicUploadUrl } from '../../config/storage';
 
@@ -35,35 +43,72 @@ export class UploadService {
       throw new BadRequestException('Sequência de blocos inválida.');
     }
 
-    const uploadsRoot = ensureUploadsRootPath();
-    const chunksRoot = join(uploadsRoot, '.chunks', input.uploadId);
-    await mkdir(chunksRoot, { recursive: true });
-    await writeFile(join(chunksRoot, `${input.chunkIndex}.part`), chunk.buffer);
-
-    if (input.chunkIndex !== input.totalChunks - 1) {
-      return {
-        complete: false,
-        chunkIndex: input.chunkIndex,
-        totalChunks: input.totalChunks,
-      };
-    }
-
     const safeExtension = extname(input.originalName)
       .toLowerCase()
       .replace(/[^.a-z0-9]/g, '')
       .slice(0, 12);
-    const filename = `${Date.now()}-${Math.round(Math.random() * 1e9)}${safeExtension}`;
+    const filename = `${input.uploadId}${safeExtension}`;
+    const uploadsRoot = ensureUploadsRootPath();
     const destination = join(uploadsRoot, filename);
+    const sessionRoot = join(uploadsRoot, '.chunks', input.uploadId);
+    const stagingPath = join(sessionRoot, 'uploading.tmp');
+    const metadataPath = join(sessionRoot, 'metadata.json');
+
+    // Se a resposta final se perdeu na rede, a repetição devolve o mesmo
+    // resultado sem remontar nem duplicar o arquivo.
+    if (await this.fileExists(destination)) {
+      return this.completedUpload(input, chunk, filename);
+    }
+
+    await mkdir(sessionRoot, { recursive: true });
 
     try {
-      await writeFile(destination, Buffer.alloc(0));
-      for (let index = 0; index < input.totalChunks; index += 1) {
-        const buffer = await readFile(join(chunksRoot, `${index}.part`));
-        await appendFile(destination, buffer);
+      const metadata = await this.getUploadMetadata(
+        input,
+        chunk.buffer.length,
+        metadataPath,
+      );
+      const file = await open(
+        stagingPath,
+        (await this.fileExists(stagingPath)) ? 'r+' : 'w+',
+      );
+      try {
+        // Cada bloco ocupa uma posição fixa. Uma tentativa repetida apenas
+        // sobrescreve o mesmo trecho, sem duplicar bytes no vídeo.
+        await file.write(
+          chunk.buffer,
+          0,
+          chunk.buffer.length,
+          input.chunkIndex * metadata.chunkSize,
+        );
+      } finally {
+        await file.close();
       }
-      await rm(chunksRoot, { recursive: true, force: true });
+      await writeFile(join(sessionRoot, `${input.chunkIndex}.received`), '');
+
+      if (input.chunkIndex !== input.totalChunks - 1) {
+        return {
+          complete: false,
+          chunkIndex: input.chunkIndex,
+          totalChunks: input.totalChunks,
+        };
+      }
+
+      for (let index = 0; index < input.totalChunks; index += 1) {
+        if (!(await this.fileExists(join(sessionRoot, `${index}.received`)))) {
+          throw new BadRequestException(
+            `O bloco ${index + 1} precisa ser reenviado antes da conclusão.`,
+          );
+        }
+      }
+
+      // Renomear dentro do mesmo volume é uma operação imediata. Assim a
+      // última requisição não fica copiando o vídeo inteiro e não estoura
+      // o tempo limite do proxy do Railway.
+      await rename(stagingPath, destination);
+      await rm(sessionRoot, { recursive: true, force: true });
     } catch (error) {
-      await rm(destination, { force: true }).catch(() => undefined);
+      if (error instanceof BadRequestException) throw error;
       throw new InternalServerErrorException({
         code: 'UPLOAD_ASSEMBLY_FAILED',
         message:
@@ -72,6 +117,55 @@ export class UploadService {
       });
     }
 
+    return this.completedUpload(input, chunk, filename);
+  }
+
+  private async getUploadMetadata(
+    input: UploadChunkInput,
+    receivedSize: number,
+    metadataPath: string,
+  ) {
+    if (await this.fileExists(metadataPath)) {
+      const metadata = JSON.parse(await readFile(metadataPath, 'utf8')) as {
+        chunkSize: number;
+        totalChunks: number;
+        originalName: string;
+      };
+      if (
+        metadata.totalChunks !== input.totalChunks ||
+        metadata.originalName !== input.originalName
+      ) {
+        throw new BadRequestException('Os dados deste upload foram alterados.');
+      }
+      return metadata;
+    }
+
+    if (input.chunkIndex !== 0) {
+      throw new BadRequestException('O primeiro bloco precisa ser reenviado.');
+    }
+    const metadata = {
+      chunkSize: receivedSize,
+      totalChunks: input.totalChunks,
+      originalName: input.originalName,
+    };
+    await writeFile(metadataPath, JSON.stringify(metadata));
+    return metadata;
+  }
+
+  private async fileExists(path: string) {
+    try {
+      await access(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private completedUpload(
+    input: UploadChunkInput,
+    chunk: Express.Multer.File,
+    filename: string,
+  ) {
     return {
       complete: true,
       url: publicUploadUrl(filename),
