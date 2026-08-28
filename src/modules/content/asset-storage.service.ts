@@ -6,6 +6,7 @@ import {
   HeadObjectCommand,
   ListPartsCommand,
   PutObjectCommand,
+  PutBucketCorsCommand,
   S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
@@ -21,6 +22,7 @@ import type { Readable } from 'node:stream';
 import { basename, extname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { ensureUploadsRootPath, uploadsRootPath } from '../../config/storage';
+import { getFrontendOrigins } from '../../config/frontend-origins';
 
 export interface StoredAsset {
   body: Readable;
@@ -38,6 +40,7 @@ export class AssetStorageService {
     size: number,
   ) {
     const config = this.requireS3Config();
+    await this.configureBrowserUploadCors(config);
     const safeExtension = extname(originalName)
       .toLowerCase()
       .replace(/[^.a-z0-9]/g, '')
@@ -331,6 +334,39 @@ export class AssetStorageService {
       });
     }
     return config;
+  }
+
+  private async configureBrowserUploadCors(
+    config: NonNullable<ReturnType<AssetStorageService['s3Config']>>,
+  ) {
+    const allowedOrigins = [...new Set(getFrontendOrigins())];
+    try {
+      await config.client.send(
+        new PutBucketCorsCommand({
+          Bucket: config.bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedOrigins: allowedOrigins,
+                AllowedMethods: ['PUT', 'POST'],
+                AllowedHeaders: ['*'],
+                ExposeHeaders: ['ETag'],
+                MaxAgeSeconds: 3600,
+              },
+            ],
+          },
+        }),
+      );
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } })
+        .$metadata?.httpStatusCode;
+      throw new BadRequestException({
+        code: 'BUCKET_CORS_CONFIGURATION_FAILED',
+        message:
+          'O Bucket foi conectado, mas não aceitou a configuração de upload do navegador. Revise FRONTEND_URLS e as credenciais do Bucket.',
+        ...(status ? { storageStatus: status } : {}),
+      });
+    }
   }
 
   private objectKey(filename: string) {
