@@ -7,9 +7,12 @@ import {
 } from '@nestjs/common';
 import { verifyToken } from '@clerk/backend';
 import { getClerkAuthorizedParties } from '../config/frontend-origins';
+import { verifyUploadSessionToken } from './upload-session-token';
 
 export interface ClerkAuthenticatedRequest {
   headers: Record<string, string | string[] | undefined>;
+  method?: string;
+  originalUrl?: string;
   auth?: {
     userId: string;
   };
@@ -23,6 +26,28 @@ export class ClerkAuthGuard implements CanActivate {
     const request = context
       .switchToHttp()
       .getRequest<ClerkAuthenticatedRequest>();
+    const uploadToken = request.headers['x-upload-token'];
+
+    if (
+      request.method === 'POST' &&
+      request.originalUrl
+        ?.split('?')[0]
+        .endsWith('/api/courses/upload/chunk') &&
+      typeof uploadToken === 'string'
+    ) {
+      try {
+        const uploadSession = verifyUploadSessionToken(uploadToken);
+        if (!uploadSession) {
+          throw new UnauthorizedException('Invalid upload session.');
+        }
+        request.auth = { userId: uploadSession.userId };
+        return true;
+      } catch (error) {
+        if (error instanceof UnauthorizedException) throw error;
+        throw new UnauthorizedException('Invalid upload session.');
+      }
+    }
+
     const authHeader = request.headers.authorization;
 
     if (typeof authHeader !== 'string') {

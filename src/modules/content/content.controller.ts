@@ -27,6 +27,7 @@ import { IsInt, Matches, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
+import { randomUUID } from 'node:crypto';
 import { ClerkAuthGuard } from '../../auth/clerk-auth.guard';
 import { CurrentUser } from '../../auth/current-user.decorator';
 import { DatabaseUserGuard } from '../../auth/database-user.guard';
@@ -37,6 +38,7 @@ import { ContentService } from './content.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { ensureUploadsRootPath, publicUploadUrl } from '../../config/storage';
 import { UploadService } from './upload.service';
+import { issueUploadSessionToken } from '../../auth/upload-session-token';
 
 export class UpdateProgressDto {
   @IsString()
@@ -159,6 +161,18 @@ export class ContentController {
     @UploadedFile() file: Express.Multer.File,
   ) {
     return this.uploadService.storeChunk(body, file);
+  }
+
+  @Post('upload/session')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  createUploadSession(@CurrentUser() user: User) {
+    const uploadId = randomUUID();
+    return {
+      uploadId,
+      uploadToken: issueUploadSessionToken(uploadId, user.id),
+      expiresInSeconds: 2 * 60 * 60,
+    };
   }
 
   @Get('materials/:filename/download')

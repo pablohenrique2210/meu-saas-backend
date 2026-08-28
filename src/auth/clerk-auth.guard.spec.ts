@@ -1,6 +1,7 @@
 import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { verifyToken } from '@clerk/backend';
 import { ClerkAuthGuard } from './clerk-auth.guard';
+import { issueUploadSessionToken } from './upload-session-token';
 
 jest.mock('@clerk/backend', () => ({
   verifyToken: jest.fn(),
@@ -61,6 +62,23 @@ describe('ClerkAuthGuard', () => {
     await expect(
       guard.canActivate(createContext({ headers: {} })),
     ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('accepts a temporary upload session only on the chunk route', async () => {
+    const request = {
+      method: 'POST',
+      originalUrl: '/api/courses/upload/chunk',
+      headers: {
+        'x-upload-token': issueUploadSessionToken(
+          'upload-12345678',
+          'user_upload',
+        ),
+      },
+    };
+
+    await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+    expect(request).toHaveProperty('auth.userId', 'user_upload');
+    expect(mockVerifyToken).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid Clerk token', async () => {
