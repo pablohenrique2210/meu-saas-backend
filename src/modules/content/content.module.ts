@@ -6,6 +6,7 @@ import { ClerkAuthGuard } from '../../auth/clerk-auth.guard';
 import { DatabaseUserGuard } from '../../auth/database-user.guard';
 import { RolesGuard } from '../../auth/roles.guard';
 import { RhAccessGuard } from '../../auth/rh-access.guard';
+import { UploadService } from './upload.service';
 
 @Module({
   controllers: [ContentController],
@@ -16,6 +17,7 @@ import { RhAccessGuard } from '../../auth/rh-access.guard';
     DatabaseUserGuard,
     RolesGuard,
     RhAccessGuard,
+    UploadService,
   ],
 })
 export class ContentModule {}

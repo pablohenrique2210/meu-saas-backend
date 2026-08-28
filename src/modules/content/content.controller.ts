@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -22,8 +23,9 @@ import {
   IsString,
   Min,
 } from 'class-validator';
-import * as fs from 'fs';
-import { diskStorage } from 'multer';
+import { IsInt, Matches, Max } from 'class-validator';
+import { Type } from 'class-transformer';
+import { diskStorage, memoryStorage } from 'multer';
 import { extname } from 'path';
 import { ClerkAuthGuard } from '../../auth/clerk-auth.guard';
 import { CurrentUser } from '../../auth/current-user.decorator';
@@ -33,7 +35,8 @@ import { RolesGuard } from '../../auth/roles.guard';
 import { RhAccessGuard } from '../../auth/rh-access.guard';
 import { ContentService } from './content.service';
 import { CreateCourseDto } from './dto/create-course.dto';
-import { publicUploadUrl, uploadsRootPath } from '../../config/storage';
+import { ensureUploadsRootPath, publicUploadUrl } from '../../config/storage';
+import { UploadService } from './upload.service';
 
 export class UpdateProgressDto {
   @IsString()
@@ -48,10 +51,37 @@ export class UpdateProgressDto {
   isCompleted?: boolean;
 }
 
+export class UploadChunkDto {
+  @IsString()
+  @Matches(/^[a-zA-Z0-9-]{8,80}$/)
+  uploadId: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  chunkIndex: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10_000)
+  totalChunks: number;
+
+  @IsString()
+  originalName: string;
+
+  @IsString()
+  @IsOptional()
+  mimeType?: string;
+}
+
 @Controller('courses')
 @UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard)
 export class ContentController {
-  constructor(private readonly contentService: ContentService) {}
+  constructor(
+    private readonly contentService: ContentService,
+    private readonly uploadService: UploadService,
+  ) {}
 
   @Post('progress')
   updateProgress(@CurrentUser() user: User, @Body() dto: UpdateProgressDto) {
@@ -84,11 +114,16 @@ export class ContentController {
       limits: { fileSize: 2 * 1024 * 1024 * 1024 },
       storage: diskStorage({
         destination: (_request, _file, callback) => {
-          const uploadPath = uploadsRootPath();
-          if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
+          try {
+            callback(null, ensureUploadsRootPath());
+          } catch (error) {
+            callback(
+              error instanceof Error
+                ? error
+                : new Error('A pasta de uploads não está disponível.'),
+              '',
+            );
           }
-          callback(null, uploadPath);
         },
         filename: (_request, file, callback) => {
           const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
@@ -98,13 +133,32 @@ export class ContentController {
     }),
   )
   uploadFile(@UploadedFile() file: Express.Multer.File) {
-    if (!file) return { url: '' };
+    if (!file) throw new BadRequestException('Nenhum arquivo foi recebido.');
     return {
       url: publicUploadUrl(file.filename),
       originalName: file.originalname,
       mimeType: file.mimetype,
-      materialType: this.materialTypeFor(file),
+      materialType: this.uploadService.materialTypeFor(
+        file.mimetype,
+        file.originalname,
+      ),
     };
+  }
+
+  @Post('upload/chunk')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+    }),
+  )
+  uploadChunk(
+    @Body() body: UploadChunkDto,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.uploadService.storeChunk(body, file);
   }
 
   @Get('materials/:filename/download')
@@ -149,20 +203,5 @@ export class ContentController {
   @Roles(Role.ADMIN, Role.HR_MANAGER)
   deleteCourse(@Param('id') id: string) {
     return this.contentService.deleteCourse(id);
-  }
-
-  private materialTypeFor(file: Express.Multer.File) {
-    const mime = file.mimetype.toLowerCase();
-    const extension = extname(file.originalname).toLowerCase();
-    if (mime.startsWith('image/')) return 'IMAGE';
-    if (mime === 'application/pdf' || extension === '.pdf') return 'PDF';
-    if (/word|document/.test(mime) || ['.doc', '.docx'].includes(extension))
-      return 'WORD';
-    if (/excel|spreadsheet|csv/.test(mime) || ['.xls', '.xlsx', '.csv'].includes(extension))
-      return 'SPREADSHEET';
-    if (/powerpoint|presentation/.test(mime) || ['.ppt', '.pptx'].includes(extension))
-      return 'PRESENTATION';
-    if (['.zip', '.rar', '.7z'].includes(extension)) return 'ARCHIVE';
-    return 'FILE';
   }
 }

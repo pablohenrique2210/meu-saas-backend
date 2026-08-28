@@ -1,4 +1,5 @@
 import { join, resolve } from 'node:path';
+import { accessSync, constants, mkdirSync, statSync } from 'node:fs';
 
 export function uploadsRootPath() {
   const configuredPath =
@@ -6,6 +7,16 @@ export function uploadsRootPath() {
     process.env.RAILWAY_VOLUME_MOUNT_PATH?.trim();
 
   return resolve(configuredPath || join(process.cwd(), 'uploads'));
+}
+
+export function ensureUploadsRootPath() {
+  const uploadPath = uploadsRootPath();
+  mkdirSync(uploadPath, { recursive: true });
+  if (!statSync(uploadPath).isDirectory()) {
+    throw new Error(`O caminho de uploads não é uma pasta: ${uploadPath}`);
+  }
+  accessSync(uploadPath, constants.R_OK | constants.W_OK);
+  return uploadPath;
 }
 
 export function publicUploadUrl(filename: string) {
