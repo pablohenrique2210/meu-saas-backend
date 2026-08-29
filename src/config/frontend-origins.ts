@@ -23,6 +23,13 @@ function getVercelFrontendProjects() {
   ).map((project) => project.toLowerCase());
 }
 
+function getVercelFrontendTeams() {
+  return splitList(
+    process.env.VERCEL_FRONTEND_TEAMS ??
+      'pablohenrique2210-6435s-projects',
+  ).map((team) => team.toLowerCase());
+}
+
 export function isAllowedVercelOrigin(origin: string) {
   try {
     const url = new URL(origin);
@@ -30,11 +37,14 @@ export function isAllowedVercelOrigin(origin: string) {
     return (
       url.protocol === 'https:' &&
       hostname.endsWith('.vercel.app') &&
-      getVercelFrontendProjects().some(
+      (getVercelFrontendProjects().some(
         (project) =>
           hostname === `${project}.vercel.app` ||
           hostname.startsWith(`${project}-`),
-      )
+      ) ||
+        getVercelFrontendTeams().some((team) =>
+          hostname.endsWith(`-${team}.vercel.app`),
+        ))
     );
   } catch {
     return false;

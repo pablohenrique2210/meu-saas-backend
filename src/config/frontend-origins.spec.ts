@@ -7,6 +7,7 @@ describe('frontend origins', () => {
   const originalFrontendUrls = process.env.FRONTEND_URLS;
   const originalFrontendUrl = process.env.FRONTEND_URL;
   const originalVercelProjects = process.env.VERCEL_FRONTEND_PROJECTS;
+  const originalVercelTeams = process.env.VERCEL_FRONTEND_TEAMS;
   const originalAuthorizedParties = process.env.CLERK_AUTHORIZED_PARTIES;
 
   afterEach(() => {
@@ -17,6 +18,7 @@ describe('frontend origins', () => {
     restore('FRONTEND_URLS', originalFrontendUrls);
     restore('FRONTEND_URL', originalFrontendUrl);
     restore('VERCEL_FRONTEND_PROJECTS', originalVercelProjects);
+    restore('VERCEL_FRONTEND_TEAMS', originalVercelTeams);
     restore('CLERK_AUTHORIZED_PARTIES', originalAuthorizedParties);
   });
 
@@ -61,5 +63,22 @@ describe('frontend origins', () => {
       'http://localhost:3000',
       preview,
     ]);
+  });
+
+  it('allows previews created by projects in the configured Vercel team', () => {
+    process.env.VERCEL_FRONTEND_PROJECTS = 'laconsultoria';
+    process.env.VERCEL_FRONTEND_TEAMS =
+      'pablohenrique2210-6435s-projects';
+
+    expect(
+      isAllowedFrontendOrigin(
+        'https://sereno-bj4gn3jid-pablohenrique2210-6435s-projects.vercel.app',
+      ),
+    ).toBe(true);
+    expect(
+      isAllowedFrontendOrigin(
+        'https://sereno-bj4gn3jid-outra-equipe.vercel.app',
+      ),
+    ).toBe(false);
   });
 });
