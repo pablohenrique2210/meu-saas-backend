@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Header,
   Param,
   Post,
   Res,
@@ -174,6 +175,15 @@ export class ContentController {
     @Param('lessonId') lessonId: string,
   ) {
     return this.contentService.getProgress(user, lessonId);
+  }
+
+  @Get('lessons/:lessonId/playback')
+  @Header('Cache-Control', 'private, no-store')
+  getLessonPlayback(
+    @CurrentUser() user: User,
+    @Param('lessonId') lessonId: string,
+  ) {
+    return this.contentService.getLessonPlayback(user, lessonId);
   }
 
   @Get('lessons/:lessonId/quiz')

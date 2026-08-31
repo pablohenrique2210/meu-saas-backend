@@ -15,9 +15,14 @@ import { ModuleGameType } from '../../games/game-types';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateCourseDto } from './dto/create-course.dto';
 import { AssetStorageService } from './asset-storage.service';
+import {
+  BunnyStreamService,
+  parseBunnyReference,
+} from './bunny-stream.service';
 
 type AccessibleLesson = {
   id: string;
+  contentUrl: string | null;
   type: LessonType;
   duration: number;
   minimumWatchSeconds: number;
@@ -38,6 +43,7 @@ export class ContentService {
   constructor(
     private prisma: PrismaService,
     private readonly assets: AssetStorageService = new AssetStorageService(),
+    private readonly bunny: BunnyStreamService = new BunnyStreamService(),
   ) {}
 
   // ==========================================
@@ -161,6 +167,23 @@ export class ContentService {
       quizRequired,
       quizCompleted,
     );
+  }
+
+  async getLessonPlayback(user: User, lessonId: string) {
+    const lesson = await this.assertCanAccessLesson(user, lessonId);
+    await this.assertLessonIsUnlocked(user, lesson);
+    if (
+      lesson.type !== LessonType.VIDEO ||
+      !parseBunnyReference(lesson.contentUrl ?? '')
+    ) {
+      throw new NotFoundException('Esta aula não possui um vídeo Bunny.');
+    }
+    const playback = await this.bunny.playback(lesson.contentUrl!);
+    const progress = await this.prisma.lessonProgress.findUnique({
+      where: { userId_lessonId: { userId: user.id, lessonId } },
+      select: { lastTime: true },
+    });
+    return { ...playback, lastTime: progress?.lastTime ?? 0 };
   }
 
   async getLessonQuiz(user: User, lessonId: string) {
@@ -300,7 +323,8 @@ export class ContentService {
   // 📚 CRIAÇÃO E LEITURA DE CURSOS
   // ==========================================
   async createCourse(dto: CreateCourseDto) {
-    const { modules, ...courseData } = dto;
+    const { modules: inputModules, ...courseData } = dto;
+    const modules = await this.normalizeBunnyModules(inputModules);
     return this.prisma.course.create({
       data: {
         ...courseData,
@@ -488,7 +512,8 @@ export class ContentService {
   // ✏️ ATUALIZAR INFORMAÇÕES E MÓDULOS DO CURSO
   // ==========================================
   async updateCourse(courseId: string, data: any) {
-    const { modules, ...courseData } = data;
+    const { modules: inputModules, ...courseData } = data;
+    const modules = await this.normalizeBunnyModules(inputModules);
 
     // 1. Apanhar os IDs reais que chegaram do Frontend (Ignorar os IDs temporários)
     const incomingModuleIds =
@@ -663,6 +688,7 @@ export class ContentService {
       select: {
         id: true,
         type: true,
+        contentUrl: true,
         duration: true,
         minimumWatchSeconds: true,
         quizConfig: true,
@@ -895,6 +921,64 @@ export class ContentService {
     };
   }
 
+  private async normalizeBunnyModules(modules?: any[]) {
+    if (!modules) return modules;
+    const normalized = [] as any[];
+    const metadata = new Map<
+      string,
+      Awaited<ReturnType<BunnyStreamService['metadata']>>
+    >();
+    for (const mod of modules) {
+      const lessons = [] as any[];
+      for (const lesson of mod.lessons ?? []) {
+        const url =
+          typeof lesson.contentUrl === 'string' ? lesson.contentUrl.trim() : '';
+        const ids = parseBunnyReference(url);
+        if (!ids) {
+          if (
+            url.startsWith('bunny:') ||
+            /^https:\/\/(iframe|player)\.mediadelivery\.net\//i.test(url)
+          ) {
+            throw new BadRequestException(
+              'Referência Bunny inválida. Cole o endereço Embed completo, não o HTML do iframe.',
+            );
+          }
+          lessons.push(lesson);
+          continue;
+        }
+        if (lesson.type !== LessonType.VIDEO)
+          throw new BadRequestException(
+            'Vídeos Bunny devem usar o tipo VIDEO.',
+          );
+        const reference = `bunny://${ids.libraryId}/${ids.videoId}`;
+        let video = metadata.get(reference);
+        if (!video) {
+          video = await this.bunny.metadata(reference);
+          metadata.set(reference, video);
+        }
+        const durationSeconds =
+          video.durationSeconds || Math.ceil(Number(lesson.duration) * 60);
+        if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+          throw new BadRequestException(
+            'O Bunny ainda está processando a duração. Aguarde e salve novamente.',
+          );
+        }
+        const requestedMinimum = Number(lesson.minimumWatchSeconds);
+        lessons.push({
+          ...lesson,
+          contentUrl: reference,
+          duration: Math.ceil(durationSeconds / 60),
+          minimumWatchSeconds:
+            Number.isFinite(requestedMinimum) && requestedMinimum > 0
+              ? Math.min(Math.round(requestedMinimum), durationSeconds)
+              : durationSeconds,
+        });
+      }
+      normalized.push({ ...mod, lessons });
+    }
+    return normalized;
+  }
+
   private minimumWatchSecondsFor(lesson: {
     type?: LessonType | string;
     duration?: number | string;
@@ -902,7 +986,11 @@ export class ContentService {
     contentUrl?: string;
   }) {
     if (lesson.type !== LessonType.VIDEO && lesson.type !== 'VIDEO') return 0;
-    if (!/\.(mp4|webm)(?:$|[?#])/i.test(lesson.contentUrl ?? '')) return 0;
+    if (
+      !parseBunnyReference(lesson.contentUrl ?? '') &&
+      !/\.(mp4|webm)(?:$|[?#])/i.test(lesson.contentUrl ?? '')
+    )
+      return 0;
 
     if (lesson.minimumWatchSeconds !== undefined) {
       return Math.max(0, Math.round(Number(lesson.minimumWatchSeconds) || 0));

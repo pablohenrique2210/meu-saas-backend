@@ -9,6 +9,7 @@ import { RhAccessGuard } from '../../auth/rh-access.guard';
 import { UploadService } from './upload.service';
 import { AssetStorageService } from './asset-storage.service';
 import { MediaController } from './media.controller';
+import { BunnyStreamService } from './bunny-stream.service';
 
 @Module({
   controllers: [ContentController, MediaController],
@@ -21,6 +22,7 @@ import { MediaController } from './media.controller';
     RhAccessGuard,
     UploadService,
     AssetStorageService,
+    BunnyStreamService,
   ],
 })
 export class ContentModule {}
