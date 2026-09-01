@@ -181,7 +181,7 @@ describe('Course Bunny integration', () => {
   });
   it('links a completed Bunny upload to the lesson immediately', async () => {
     await expect(
-      service.linkLessonVideo('lesson', reference, 590),
+      service.linkLessonVideo('lesson', reference, 590, 120),
     ).resolves.toMatchObject({ contentUrl: reference });
     expect(bunny.metadata).toHaveBeenCalledWith(reference);
     expect(prisma.lesson.update).toHaveBeenCalledWith({
@@ -189,7 +189,7 @@ describe('Course Bunny integration', () => {
       data: {
         contentUrl: reference,
         duration: 11,
-        minimumWatchSeconds: 601,
+        minimumWatchSeconds: 120,
       },
       select: {
         id: true,

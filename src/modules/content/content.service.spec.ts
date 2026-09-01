@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { LessonType, Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -22,6 +26,7 @@ function accessibleLesson(
     id: string;
     duration: number;
     minimumWatchSeconds: number;
+    quizConfig: Record<string, unknown> | null;
     orderedLessonIds: string[];
     modules: Array<{
       id: string;
@@ -36,6 +41,7 @@ function accessibleLesson(
     type: LessonType.VIDEO,
     duration: overrides.duration ?? 10,
     minimumWatchSeconds: overrides.minimumWatchSeconds ?? 0,
+    quizConfig: overrides.quizConfig ?? null,
     module: {
       course: {
         modules: overrides.modules
@@ -62,15 +68,21 @@ function accessibleLesson(
 
 describe('ContentService access control', () => {
   const prisma = {
-    course: { findMany: jest.fn() },
+    $transaction: jest.fn(),
+    course: { create: jest.fn(), findMany: jest.fn() },
     lesson: { findFirst: jest.fn() },
     lessonProgress: { findUnique: jest.fn(), upsert: jest.fn() },
+    lessonQuizResult: { findUnique: jest.fn(), upsert: jest.fn() },
     moduleGameResult: { findUnique: jest.fn() },
   };
   let service: ContentService;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.$transaction.mockImplementation(
+      async (operation: (client: typeof prisma) => unknown) =>
+        operation(prisma),
+    );
     prisma.lesson.findFirst.mockResolvedValue(accessibleLesson());
     prisma.lessonProgress.findUnique.mockResolvedValue(null);
     service = new ContentService(prisma as unknown as PrismaService);
@@ -174,6 +186,53 @@ describe('ContentService access control', () => {
     expect(update.watchedSeconds.increment).toBeLessThanOrEqual(3.1);
   });
 
+  it('does not trust retroactive time on the first progress request', async () => {
+    prisma.lessonProgress.upsert.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 500,
+      watchedSeconds: 0,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+
+    await service.updateProgress(employee, 'lesson_1', 500);
+
+    const create = prisma.lessonProgress.upsert.mock.calls[0][0].create;
+    expect(create.watchedSeconds).toBe(0);
+    expect(create.isCompleted).toBe(false);
+  });
+
+  it('does not accumulate a fixed tolerance when requests are repeated rapidly', async () => {
+    prisma.lessonProgress.findUnique.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 10,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+    prisma.lessonProgress.upsert.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 12,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+
+    await service.updateProgress(employee, 'lesson_1', 12);
+
+    const update = prisma.lessonProgress.upsert.mock.calls[0][0].update;
+    expect(update.watchedSeconds.increment).toBeLessThan(0.25);
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+  });
+
   it('blocks a lesson while the previous lesson is incomplete', async () => {
     prisma.lesson.findFirst.mockResolvedValue(
       accessibleLesson({
@@ -214,5 +273,138 @@ describe('ContentService access control', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty visual quiz before persisting the course', async () => {
+    await expect(
+      service.createCourse({
+        title: 'Curso',
+        category: 'Liderança',
+        modules: [
+          {
+            title: 'Módulo 1',
+            lessons: [
+              {
+                title: 'Aula 1',
+                type: 'VIDEO',
+                quizConfig: { formatVersion: 2, questions: [] },
+              },
+            ],
+          },
+        ],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(prisma.course.create).not.toHaveBeenCalled();
+  });
+
+  it('does not expose correct answers or feedback when loading a lesson quiz', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({
+        quizConfig: {
+          title: 'Quiz',
+          questions: [
+            {
+              id: 'q1',
+              prompt: 'Pergunta',
+              type: 'single',
+              options: [
+                {
+                  id: 'a1',
+                  label: 'Correta',
+                  correct: true,
+                  feedback: 'Justificativa',
+                },
+                { id: 'a2', label: 'Incorreta', correct: false },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    prisma.lessonQuizResult.findUnique.mockResolvedValue(null);
+
+    const quiz = await service.getLessonQuiz(employee, 'lesson_1');
+
+    expect(quiz.questions[0].correctOptionCount).toBe(1);
+    expect(quiz.questions[0].options[0]).toEqual({
+      id: 'a1',
+      label: 'Correta',
+    });
+  });
+
+  it('grades all selected options in a multiple-answer lesson quiz', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({
+        quizConfig: {
+          title: 'Quiz',
+          questions: [
+            {
+              id: 'q1',
+              prompt: 'Pergunta',
+              type: 'multiple',
+              options: [
+                { id: 'a1', label: 'Primeira', correct: true },
+                {
+                  id: 'a2',
+                  label: 'Segunda',
+                  correct: true,
+                  feedback: 'Boa escolha.',
+                },
+                { id: 'a3', label: 'Terceira', correct: false },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    prisma.lessonQuizResult.upsert.mockResolvedValue({ id: 'result_1' });
+
+    const result = await service.submitLessonQuiz(employee, 'lesson_1', [
+      { questionId: 'q1', selectedOptionIds: ['a1', 'a2'] },
+    ]);
+
+    expect(result.questionFeedback).toEqual([
+      { questionId: 'q1', correct: true, feedback: 'Boa escolha.' },
+    ]);
+    expect(prisma.lessonQuizResult.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ correctAnswers: 1 }),
+      }),
+    );
+  });
+
+  it('accepts a visual module assessment with multiple correct answers', async () => {
+    prisma.course.create.mockResolvedValue({ id: 'course_1' });
+
+    await service.createCourse({
+      title: 'Curso',
+      category: 'Liderança',
+      modules: [
+        {
+          title: 'Módulo 1',
+          gameType: 'CORRIDA',
+          gameConfig: {
+            formatVersion: 2,
+            title: 'Avaliação',
+            questions: [
+              {
+                id: 'q1',
+                prompt: 'Quais atitudes são adequadas?',
+                type: 'multiple',
+                correctOptionIds: ['a1', 'a2'],
+                options: [
+                  { id: 'a1', label: 'Ouvir', correct: true },
+                  { id: 'a2', label: 'Orientar', correct: true },
+                ],
+              },
+            ],
+          },
+          lessons: [],
+        },
+      ],
+    });
+
+    expect(prisma.course.create).toHaveBeenCalledTimes(1);
   });
 });

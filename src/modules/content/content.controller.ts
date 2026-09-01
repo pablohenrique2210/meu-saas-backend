@@ -20,6 +20,7 @@ import type { Response } from 'express';
 import {
   IsBoolean,
   IsIn,
+  IsArray,
   ArrayMinSize,
   IsNumber,
   IsOptional,
@@ -50,6 +51,7 @@ export class UpdateProgressDto {
 
   @IsNumber()
   @Min(0)
+  @Max(24 * 60 * 60)
   lastTime: number;
 
   @IsBoolean()
@@ -86,7 +88,14 @@ export class LessonQuizAnswerDto {
   questionId: string;
 
   @IsString()
-  selectedOptionId: string;
+  @IsOptional()
+  selectedOptionId?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  @IsOptional()
+  selectedOptionIds?: string[];
 }
 
 export class SubmitLessonQuizDto {
@@ -113,6 +122,13 @@ export class LinkLessonVideoDto {
   @Max(24 * 60 * 60)
   @IsOptional()
   durationSeconds?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(24 * 60 * 60)
+  @IsOptional()
+  minimumWatchSeconds?: number;
 }
 
 export class DirectUploadSessionDto {
@@ -216,6 +232,7 @@ export class ContentController {
       lessonId,
       dto.contentUrl,
       dto.durationSeconds,
+      dto.minimumWatchSeconds,
     );
   }
 

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { LessonType, Role } from '@prisma/client';
 import type {
+  LessonProgress as LessonProgressRecord,
   ModuleGameType as ModuleGameTypeValue,
   Prisma,
   User,
@@ -60,10 +61,6 @@ export class ContentService {
   ) {
     const lesson = await this.assertCanAccessLesson(user, lessonId);
     await this.assertLessonIsUnlocked(user, lesson);
-
-    const existingProgress = await this.prisma.lessonProgress.findUnique({
-      where: { userId_lessonId: { userId: user.id, lessonId } },
-    });
     const maximumVideoTime = lesson.duration > 0 ? lesson.duration * 60 : null;
     const safeLastTime = Math.max(
       0,
@@ -71,43 +68,66 @@ export class ContentService {
         ? lastTime
         : Math.min(lastTime, maximumVideoTime),
     );
-    const watchedIncrement = this.calculateWatchedIncrement(
-      existingProgress,
-      safeLastTime,
-    );
     const requiredSeconds = this.requiredWatchSeconds(user, lesson);
     const quizRequired =
       user.role === Role.USER && this.hasLessonQuiz(lesson.quizConfig);
-    const quizResult = quizRequired
-      ? await this.prisma.lessonQuizResult.findUnique({
-          where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
-          select: { id: true },
-        })
-      : null;
-    const quizCompleted = !quizRequired || Boolean(quizResult);
-    const predictedWatchedSeconds =
-      (existingProgress?.watchedSeconds ?? 0) + watchedIncrement;
-    const shouldComplete =
-      (existingProgress?.isCompleted === true && quizCompleted) ||
-      (isCompleted === true &&
-        predictedWatchedSeconds >= requiredSeconds &&
-        quizCompleted);
-
-    const progress = await this.prisma.lessonProgress.upsert({
-      where: { userId_lessonId: { userId: user.id, lessonId } },
-      update: {
-        lastTime: safeLastTime,
-        watchedSeconds: { increment: watchedIncrement },
-        isCompleted: shouldComplete,
-      },
-      create: {
-        userId: user.id,
-        lessonId,
-        lastTime: safeLastTime,
-        watchedSeconds: watchedIncrement,
-        isCompleted: shouldComplete,
-      },
-    });
+    let saved:
+      | { progress: LessonProgressRecord; quizCompleted: boolean }
+      | undefined;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        saved = await this.prisma.$transaction(
+          async (transaction) => {
+            const existingProgress =
+              await transaction.lessonProgress.findUnique({
+                where: { userId_lessonId: { userId: user.id, lessonId } },
+              });
+            const quizResult = quizRequired
+              ? await transaction.lessonQuizResult.findUnique({
+                  where: {
+                    employeeId_lessonId: { employeeId: user.id, lessonId },
+                  },
+                  select: { id: true },
+                })
+              : null;
+            const quizCompleted = !quizRequired || Boolean(quizResult);
+            const watchedIncrement = this.calculateWatchedIncrement(
+              existingProgress,
+              safeLastTime,
+            );
+            const predictedWatchedSeconds =
+              (existingProgress?.watchedSeconds ?? 0) + watchedIncrement;
+            const shouldComplete =
+              (existingProgress?.isCompleted === true && quizCompleted) ||
+              (isCompleted === true &&
+                predictedWatchedSeconds >= requiredSeconds &&
+                quizCompleted);
+            const progress = await transaction.lessonProgress.upsert({
+              where: { userId_lessonId: { userId: user.id, lessonId } },
+              update: {
+                lastTime: safeLastTime,
+                watchedSeconds: { increment: watchedIncrement },
+                isCompleted: shouldComplete,
+              },
+              create: {
+                userId: user.id,
+                lessonId,
+                lastTime: safeLastTime,
+                watchedSeconds: watchedIncrement,
+                isCompleted: shouldComplete,
+              },
+            });
+            return { progress, quizCompleted };
+          },
+          { isolationLevel: 'Serializable' },
+        );
+        break;
+      } catch (error) {
+        if (!this.isTransactionConflict(error) || attempt === 2) throw error;
+      }
+    }
+    if (!saved) throw new Error('Não foi possível gravar o progresso.');
+    const { progress, quizCompleted } = saved;
 
     if (isCompleted === true && !progress.isCompleted) {
       const remainingSeconds = Math.max(
@@ -190,6 +210,7 @@ export class ContentService {
     lessonId: string,
     contentUrl: string,
     fallbackDurationSeconds = 0,
+    requestedMinimumWatchSeconds?: number,
   ) {
     const lesson = await this.prisma.lesson.findUnique({
       where: { id: lessonId },
@@ -208,6 +229,14 @@ export class ContentService {
       Math.round(Number(fallbackDurationSeconds) || 0),
     );
     const durationSeconds = video.durationSeconds || inspectedDuration;
+    const requestedMinimum = Math.max(
+      0,
+      Math.round(Number(requestedMinimumWatchSeconds) || 0),
+    );
+    const minimumWatchSeconds =
+      durationSeconds > 0
+        ? Math.min(requestedMinimum || durationSeconds, durationSeconds)
+        : requestedMinimum;
 
     return this.prisma.lesson.update({
       where: { id: lessonId },
@@ -216,7 +245,7 @@ export class ContentService {
         ...(durationSeconds > 0
           ? {
               duration: Math.ceil(durationSeconds / 60),
-              minimumWatchSeconds: durationSeconds,
+              minimumWatchSeconds,
             }
           : {}),
       },
@@ -245,9 +274,13 @@ export class ContentService {
     return {
       lessonId,
       title: config.title,
-      questions: config.questions.map(
-        ({ correctOptionId: _correctOptionId, ...question }) => question,
-      ),
+      questions: config.questions.map(({ correctOptionIds, ...question }) => ({
+        ...question,
+        options: question.options.map(
+          ({ feedback: _feedback, correct: _correct, ...option }) => option,
+        ),
+        correctOptionCount: correctOptionIds.length,
+      })),
       completedResult,
     };
   }
@@ -255,7 +288,11 @@ export class ContentService {
   async submitLessonQuiz(
     user: User,
     lessonId: string,
-    answers: Array<{ questionId: string; selectedOptionId: string }>,
+    answers: Array<{
+      questionId: string;
+      selectedOptionId?: string;
+      selectedOptionIds?: string[];
+    }>,
   ) {
     const lesson = await this.assertCanAccessLesson(user, lessonId);
     await this.assertLessonIsUnlocked(user, lesson);
@@ -271,7 +308,14 @@ export class ContentService {
     }
 
     const submittedAnswers = new Map(
-      answers.map((answer) => [answer.questionId, answer.selectedOptionId]),
+      answers.map((answer) => [
+        answer.questionId,
+        Array.isArray(answer.selectedOptionIds)
+          ? answer.selectedOptionIds
+          : answer.selectedOptionId
+            ? [answer.selectedOptionId]
+            : [],
+      ]),
     );
     if (
       submittedAnswers.size !== config.questions.length ||
@@ -283,28 +327,45 @@ export class ContentService {
     let finalScore = 0;
     let correctAnswers = 0;
     const gradedAnswers = config.questions.map((question) => {
-      const selectedOptionId = submittedAnswers.get(question.id);
+      const selectedOptionIds = submittedAnswers.get(question.id) ?? [];
       if (
-        !selectedOptionId ||
-        !question.options.some((option) => option.id === selectedOptionId)
+        selectedOptionIds.length === 0 ||
+        new Set(selectedOptionIds).size !== selectedOptionIds.length ||
+        selectedOptionIds.some(
+          (selectedOptionId) =>
+            !question.options.some((option) => option.id === selectedOptionId),
+        )
       ) {
         throw new BadRequestException('Uma resposta do quiz é inválida.');
       }
-      const correct = selectedOptionId === question.correctOptionId;
+      const expected = new Set(question.correctOptionIds);
+      const correct =
+        selectedOptionIds.length === expected.size &&
+        selectedOptionIds.every((optionId) => expected.has(optionId));
       const awardedPoints = correct ? (question.basePoints ?? 100) : 0;
       if (correct) {
         correctAnswers += 1;
         finalScore += awardedPoints;
       }
+      const selectedFeedback = question.options.find(
+        (option) =>
+          selectedOptionIds.includes(option.id) && Boolean(option.feedback),
+      )?.feedback;
+      const correctFeedback = question.options.find(
+        (option) =>
+          question.correctOptionIds.includes(option.id) &&
+          Boolean(option.feedback),
+      )?.feedback;
       return {
         questionId: question.id,
-        selectedOptionId,
+        selectedOptionIds,
         correct,
         awardedPoints,
+        feedback: selectedFeedback || correctFeedback || '',
       };
     });
 
-    return this.prisma.lessonQuizResult.upsert({
+    const result = await this.prisma.lessonQuizResult.upsert({
       where: { employeeId_lessonId: { employeeId: user.id, lessonId } },
       update: {
         finalScore,
@@ -332,6 +393,14 @@ export class ContentService {
         },
       },
     });
+    return {
+      ...result,
+      questionFeedback: gradedAnswers.map((answer) => ({
+        questionId: answer.questionId,
+        correct: answer.correct,
+        feedback: answer.feedback,
+      })),
+    };
   }
 
   async getLessonNote(user: User, lessonId: string) {
@@ -383,7 +452,7 @@ export class ContentService {
                 contentUrl: lesson.contentUrl || '',
                 duration: Number(lesson.duration) || 0,
                 minimumWatchSeconds: this.minimumWatchSecondsFor(lesson),
-                quizConfig: lesson.quizConfig ?? undefined,
+                quizConfig: this.lessonQuizDataFor(lesson.quizConfig),
                 order: lessonIndex,
                 attachments: {
                   create: lesson.attachments?.map((att) => ({
@@ -614,7 +683,7 @@ export class ContentService {
                           duration: Number(lesson.duration) || 0,
                           minimumWatchSeconds:
                             this.minimumWatchSecondsFor(lesson),
-                          quizConfig: lesson.quizConfig ?? undefined,
+                          quizConfig: this.lessonQuizDataFor(lesson.quizConfig),
                           order: lessonIndex,
                           attachments: {
                             create: lesson.attachments?.map((att: any) => ({
@@ -656,7 +725,9 @@ export class ContentService {
                               duration: Number(lesson.duration) || 0,
                               minimumWatchSeconds:
                                 this.minimumWatchSecondsFor(lesson),
-                              quizConfig: lesson.quizConfig ?? undefined,
+                              quizConfig: this.lessonQuizDataFor(
+                                lesson.quizConfig,
+                              ),
                               order: lessonIndex,
                               attachments: {
                                 create: lesson.attachments?.map((att: any) => ({
@@ -673,7 +744,9 @@ export class ContentService {
                               duration: Number(lesson.duration) || 0,
                               minimumWatchSeconds:
                                 this.minimumWatchSecondsFor(lesson),
-                              quizConfig: lesson.quizConfig ?? undefined,
+                              quizConfig: this.lessonQuizDataFor(
+                                lesson.quizConfig,
+                              ),
                               order: lessonIndex,
                               attachments: {
                                 deleteMany: { id: { notIn: incomingAttIds } },
@@ -867,7 +940,9 @@ export class ContentService {
     } | null,
     currentTime: number,
   ) {
-    if (!progress) return Math.min(currentTime, 10);
+    // A primeira chamada apenas cria a âncora de tempo no servidor. Nenhum
+    // tempo informado pelo navegador é aceito retroativamente.
+    if (!progress) return 0;
 
     const videoAdvance = Math.max(0, currentTime - progress.lastTime);
     const elapsedSeconds = Math.max(
@@ -875,8 +950,18 @@ export class ContentService {
       (Date.now() - progress.updatedAt.getTime()) / 1000,
     );
 
-    // A tolerância absorve atrasos do navegador, mas impede saltos artificiais.
-    return Math.min(videoAdvance, elapsedSeconds + 2, 15);
+    // O relógio do servidor é o limite: repetir chamadas, acelerar ou saltar
+    // o player não pode acumular mais segundos do que o tempo real decorrido.
+    return Math.min(videoAdvance, elapsedSeconds, 15);
+  }
+
+  private isTransactionConflict(error: unknown) {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'P2034'
+    );
   }
 
   private withProgressRequirement(
@@ -946,13 +1031,39 @@ export class ContentService {
             return {
               id: String(option.id ?? ''),
               label: String(option.label ?? ''),
+              correct: option.correct === true || option.correta === true,
+              feedback:
+                typeof option.feedback === 'string'
+                  ? option.feedback
+                  : undefined,
             };
           })
         : [];
+      const declaredCorrectIds = Array.isArray(question.correctOptionIds)
+        ? question.correctOptionIds.map(String)
+        : question.correctOptionId
+          ? [String(question.correctOptionId)]
+          : options
+              .filter((option) => option.correct)
+              .map((option) => option.id);
+      const rawType = String(question.type ?? question.tipo ?? 'single');
+      const type =
+        rawType === 'multiple' || rawType === 'multipla_escolha'
+          ? 'multiple'
+          : rawType === 'boolean' || rawType === 'verdadeiro_falso'
+            ? 'boolean'
+            : 'single';
       const parsed = {
         id: String(question.id ?? ''),
-        prompt: String(question.prompt ?? ''),
-        correctOptionId: String(question.correctOptionId ?? ''),
+        prompt: String(question.prompt ?? question.pergunta ?? ''),
+        category: String(
+          question.category ??
+            question.categoria ??
+            question.sectionTitle ??
+            '',
+        ),
+        type,
+        correctOptionIds: [...new Set(declaredCorrectIds)],
         basePoints: Number(question.basePoints ?? 100),
         feedback:
           typeof question.feedback === 'string' ? question.feedback : undefined,
@@ -961,17 +1072,34 @@ export class ContentService {
       if (
         !parsed.id ||
         !parsed.prompt ||
-        !parsed.correctOptionId ||
-        parsed.options.length < 2
+        parsed.options.length < 2 ||
+        parsed.options.some((option) => !option.id || !option.label) ||
+        parsed.correctOptionIds.length === 0 ||
+        (type !== 'multiple' && parsed.correctOptionIds.length !== 1) ||
+        parsed.correctOptionIds.some(
+          (optionId) =>
+            !parsed.options.some((option) => option.id === optionId),
+        )
       ) {
         throw new BadRequestException('Configuração de quiz incompleta.');
       }
       return parsed;
     });
+    if (questions.length === 0) {
+      throw new BadRequestException(
+        'Adicione pelo menos uma pergunta ao quiz.',
+      );
+    }
     return {
       title: typeof raw.title === 'string' ? raw.title : 'Quiz da aula',
       questions,
     };
+  }
+
+  private lessonQuizDataFor(config: unknown) {
+    if (config === null || config === undefined) return undefined;
+    this.lessonQuizConfigFor(config as Prisma.JsonValue);
+    return config as Prisma.InputJsonValue;
   }
 
   private async normalizeBunnyModules(modules?: any[]) {
@@ -1077,6 +1205,11 @@ export class ContentService {
       throw new BadRequestException(
         'Configure o conteúdo da avaliação do módulo.',
       );
+    }
+
+    const gameConfig = courseModule.gameConfig as Record<string, unknown>;
+    if (gameConfig.formatVersion === 2) {
+      this.lessonQuizConfigFor(gameConfig as Prisma.JsonObject);
     }
 
     return {
