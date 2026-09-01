@@ -186,6 +186,49 @@ export class ContentService {
     return { ...playback, lastTime: progress?.lastTime ?? 0 };
   }
 
+  async linkLessonVideo(
+    lessonId: string,
+    contentUrl: string,
+    fallbackDurationSeconds = 0,
+  ) {
+    const lesson = await this.prisma.lesson.findUnique({
+      where: { id: lessonId },
+      select: { id: true, type: true },
+    });
+    if (!lesson) throw new NotFoundException('Aula não encontrada.');
+    if (lesson.type !== LessonType.VIDEO) {
+      throw new BadRequestException(
+        'Somente aulas do tipo vídeo podem receber um vídeo Bunny.',
+      );
+    }
+
+    const video = await this.bunny.metadata(contentUrl.trim());
+    const inspectedDuration = Math.max(
+      0,
+      Math.round(Number(fallbackDurationSeconds) || 0),
+    );
+    const durationSeconds = video.durationSeconds || inspectedDuration;
+
+    return this.prisma.lesson.update({
+      where: { id: lessonId },
+      data: {
+        contentUrl: video.reference,
+        ...(durationSeconds > 0
+          ? {
+              duration: Math.ceil(durationSeconds / 60),
+              minimumWatchSeconds: durationSeconds,
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        contentUrl: true,
+        duration: true,
+        minimumWatchSeconds: true,
+      },
+    });
+  }
+
   async getLessonQuiz(user: User, lessonId: string) {
     const lesson = await this.assertCanAccessLesson(user, lessonId);
     await this.assertLessonIsUnlocked(user, lesson);

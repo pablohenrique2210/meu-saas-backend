@@ -102,6 +102,19 @@ export class SaveLessonNoteDto {
   content: string;
 }
 
+export class LinkLessonVideoDto {
+  @IsString()
+  @MaxLength(1024)
+  contentUrl: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(24 * 60 * 60)
+  @IsOptional()
+  durationSeconds?: number;
+}
+
 export class DirectUploadSessionDto {
   @IsString()
   @MaxLength(255)
@@ -190,6 +203,20 @@ export class ContentController {
     @Param('lessonId') lessonId: string,
   ) {
     return this.contentService.getLessonPlayback(user, lessonId);
+  }
+
+  @Put('lessons/:lessonId/video')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  linkLessonVideo(
+    @Param('lessonId') lessonId: string,
+    @Body() dto: LinkLessonVideoDto,
+  ) {
+    return this.contentService.linkLessonVideo(
+      lessonId,
+      dto.contentUrl,
+      dto.durationSeconds,
+    );
   }
 
   @Get('lessons/:lessonId/quiz')

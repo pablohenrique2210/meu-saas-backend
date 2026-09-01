@@ -11,7 +11,11 @@ const user = { id: 'employee', role: Role.USER } as User;
 describe('Course Bunny integration', () => {
   const prisma = {
     course: { create: jest.fn(), update: jest.fn() },
-    lesson: { findFirst: jest.fn() },
+    lesson: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
     lessonProgress: { findUnique: jest.fn() },
   };
   const bunny = { metadata: jest.fn(), playback: jest.fn() };
@@ -42,6 +46,16 @@ describe('Course Bunny integration', () => {
       },
     });
     prisma.lessonProgress.findUnique.mockResolvedValue({ lastTime: 42 });
+    prisma.lesson.findUnique.mockResolvedValue({
+      id: 'lesson',
+      type: 'VIDEO',
+    });
+    prisma.lesson.update.mockResolvedValue({
+      id: 'lesson',
+      contentUrl: reference,
+      duration: 11,
+      minimumWatchSeconds: 601,
+    });
   });
   it('persists canonical reference and authoritative duration, not an expiring URL', async () => {
     await service.createCourse({
@@ -164,5 +178,42 @@ describe('Course Bunny integration', () => {
       lastTime: 42,
     });
     expect(bunny.playback).toHaveBeenCalledWith(reference);
+  });
+  it('links a completed Bunny upload to the lesson immediately', async () => {
+    await expect(
+      service.linkLessonVideo('lesson', reference, 590),
+    ).resolves.toMatchObject({ contentUrl: reference });
+    expect(bunny.metadata).toHaveBeenCalledWith(reference);
+    expect(prisma.lesson.update).toHaveBeenCalledWith({
+      where: { id: 'lesson' },
+      data: {
+        contentUrl: reference,
+        duration: 11,
+        minimumWatchSeconds: 601,
+      },
+      select: {
+        id: true,
+        contentUrl: true,
+        duration: true,
+        minimumWatchSeconds: true,
+      },
+    });
+  });
+  it('keeps the Bunny reference when encoding has not exposed duration yet', async () => {
+    bunny.metadata.mockResolvedValue({
+      reference,
+      durationSeconds: 0,
+      ready: false,
+    });
+    await service.linkLessonVideo('lesson', reference, 590);
+    expect(prisma.lesson.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          contentUrl: reference,
+          duration: 10,
+          minimumWatchSeconds: 590,
+        },
+      }),
+    );
   });
 });
