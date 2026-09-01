@@ -88,7 +88,7 @@ export class DatabaseUserGuard implements CanActivate {
       if ((await transaction.user.count()) > 0) return null;
 
       const company = await transaction.company.create({
-        data: { name: `Workspace de ${name}` },
+        data: { name: 'Empresa principal' },
       });
 
       return transaction.user.create({

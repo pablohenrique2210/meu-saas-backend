@@ -12,6 +12,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import {
+  isPlatformAdministrator,
+  resolveManagedCompanyId,
+} from '../auth/company-scope';
 
 const userProfileSelect = {
   id: true,
@@ -52,16 +56,17 @@ export class UsersService {
     });
   }
 
-  findEmployeesForHR(manager: User) {
+  findEmployeesForHR(manager: User, requestedCompanyId?: string) {
+    const companyId = resolveManagedCompanyId(manager, requestedCompanyId);
     return this.prisma.user.findMany({
-      where: { companyId: manager.companyId },
+      where: { companyId },
       orderBy: { name: 'asc' },
       select: userProfileSelect,
     });
   }
 
   findEmployeeForHR(manager: User, id: string) {
-    return this.findCompanyUserOrThrow(manager.companyId, id);
+    return this.findManagedUserOrThrow(manager, id);
   }
 
   createFromWebhook(dto: CreateUserDto & { companyId: string }) {
@@ -101,7 +106,7 @@ export class UsersService {
   }
 
   async update(manager: User, id: string, dto: UpdateUserDto) {
-    const target = await this.findCompanyUserOrThrow(manager.companyId, id);
+    const target = await this.findManagedUserOrThrow(manager, id);
     this.assertCanManageTarget(manager, target);
 
     if (dto.role !== undefined) {
@@ -126,7 +131,7 @@ export class UsersService {
   }
 
   async remove(manager: User, id: string) {
-    const target = await this.findCompanyUserOrThrow(manager.companyId, id);
+    const target = await this.findManagedUserOrThrow(manager, id);
     this.assertCanManageTarget(manager, target);
 
     if (manager.id === target.id) {
@@ -190,6 +195,19 @@ export class UsersService {
       throw new NotFoundException('User not found in your company.');
     }
 
+    return user;
+  }
+
+  private async findManagedUserOrThrow(manager: User, id: string) {
+    if (!isPlatformAdministrator(manager)) {
+      return this.findCompanyUserOrThrow(manager.companyId, id);
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: userProfileSelect,
+    });
+    if (!user) throw new NotFoundException('User not found.');
     return user;
   }
 

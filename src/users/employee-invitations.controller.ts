@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard';
@@ -27,6 +35,12 @@ export class EmployeeInvitationsController {
     return this.employeeInvitationsService.claim(clerkUserId, dto);
   }
 
+  @Get('claim/status')
+  @UseGuards(ClerkAuthGuard)
+  getClaimStatus(@CurrentClerkUserId() clerkUserId: string) {
+    return this.employeeInvitationsService.getActivationStatus(clerkUserId);
+  }
+
   @Get('programs')
   @UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard, RhAccessGuard)
   @Roles(Role.ADMIN, Role.HR_MANAGER)
@@ -37,8 +51,11 @@ export class EmployeeInvitationsController {
   @Get('invitations')
   @UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard, RhAccessGuard)
   @Roles(Role.ADMIN, Role.HR_MANAGER)
-  listInvitations(@CurrentUser() manager: User) {
-    return this.employeeInvitationsService.list(manager);
+  listInvitations(
+    @CurrentUser() manager: User,
+    @Query('companyId') companyId?: string,
+  ) {
+    return this.employeeInvitationsService.list(manager, companyId);
   }
 
   @Post('invitations')

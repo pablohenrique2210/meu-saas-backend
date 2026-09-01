@@ -285,31 +285,51 @@ export class AssetStorageService {
   }
 
   private s3Config() {
-    const bucket = (
-      process.env.S3_BUCKET ||
-      process.env.BUCKET ||
-      process.env.AWS_S3_BUCKET_NAME
-    )?.trim();
-    const region = (
-      process.env.S3_REGION ||
-      process.env.REGION ||
-      process.env.AWS_DEFAULT_REGION
-    )?.trim();
-    const accessKeyId = (
-      process.env.S3_ACCESS_KEY_ID ||
-      process.env.ACCESS_KEY_ID ||
-      process.env.AWS_ACCESS_KEY_ID
-    )?.trim();
-    const secretAccessKey = (
-      process.env.S3_SECRET_ACCESS_KEY ||
-      process.env.SECRET_ACCESS_KEY ||
-      process.env.AWS_SECRET_ACCESS_KEY
-    )?.trim();
-    const endpoint = (
-      process.env.S3_ENDPOINT ||
-      process.env.ENDPOINT ||
-      process.env.AWS_ENDPOINT_URL
-    )?.trim();
+    const bunnyBucket = process.env.BUNNY_STORAGE_ZONE_NAME?.trim();
+    const bunnyRegion = process.env.BUNNY_STORAGE_REGION?.trim();
+    const bunnyPassword = process.env.BUNNY_STORAGE_PASSWORD?.trim();
+    const bunnyEndpoint = process.env.BUNNY_STORAGE_S3_ENDPOINT?.trim();
+    const hasBunnyConfig = Boolean(
+      bunnyBucket || bunnyRegion || bunnyPassword || bunnyEndpoint,
+    );
+
+    // Nunca mistura uma configuração Bunny incompleta com credenciais S3
+    // antigas que possam ter sobrado da migração do Railway.
+    const bucket = hasBunnyConfig
+      ? bunnyBucket
+      : (
+          process.env.S3_BUCKET ||
+          process.env.BUCKET ||
+          process.env.AWS_S3_BUCKET_NAME
+        )?.trim();
+    const region = hasBunnyConfig
+      ? bunnyRegion
+      : (
+          process.env.S3_REGION ||
+          process.env.REGION ||
+          process.env.AWS_DEFAULT_REGION
+        )?.trim();
+    const accessKeyId = hasBunnyConfig
+      ? bunnyBucket
+      : (
+          process.env.S3_ACCESS_KEY_ID ||
+          process.env.ACCESS_KEY_ID ||
+          process.env.AWS_ACCESS_KEY_ID
+        )?.trim();
+    const secretAccessKey = hasBunnyConfig
+      ? bunnyPassword
+      : (
+          process.env.S3_SECRET_ACCESS_KEY ||
+          process.env.SECRET_ACCESS_KEY ||
+          process.env.AWS_SECRET_ACCESS_KEY
+        )?.trim();
+    const endpoint = hasBunnyConfig
+      ? bunnyEndpoint
+      : (
+          process.env.S3_ENDPOINT ||
+          process.env.ENDPOINT ||
+          process.env.AWS_ENDPOINT_URL
+        )?.trim();
     if (!bucket || !region || !accessKeyId || !secretAccessKey) return null;
     const urlStyle = (process.env.S3_URL_STYLE || process.env.AWS_S3_URL_STYLE)
       ?.trim()
@@ -333,7 +353,8 @@ export class AssetStorageService {
     if (!config) {
       throw new BadRequestException({
         code: 'OBJECT_STORAGE_NOT_CONFIGURED',
-        message: 'Conecte um Railway Bucket ao backend antes de enviar vídeos.',
+        message:
+          'Configure a Storage Zone S3 do Bunny no Railway antes de enviar materiais.',
       });
     }
     return config;
@@ -342,6 +363,11 @@ export class AssetStorageService {
   private async configureBrowserUploadCors(
     config: NonNullable<ReturnType<AssetStorageService['s3Config']>>,
   ) {
+    if (this.isBunnyS3Endpoint()) {
+      // O endpoint S3 do Bunny responde com CORS aberto por padrão e ainda não
+      // implementa PutBucketCors. Evita uma chamada recusada a cada sessão.
+      return;
+    }
     const allowedOrigins = [...new Set(getFrontendOrigins())];
     try {
       await config.client.send(
@@ -370,10 +396,43 @@ export class AssetStorageService {
   }
 
   private objectKey(filename: string) {
-    const prefix = (process.env.S3_PREFIX || 'course-assets')
+    const prefix = (
+      process.env.BUNNY_STORAGE_PREFIX ||
+      process.env.S3_PREFIX ||
+      'course-assets'
+    )
       .trim()
       .replace(/^\/+|\/+$/g, '');
     return prefix ? `${prefix}/${filename}` : filename;
+  }
+
+  async createSignedDownloadUrl(filename: string) {
+    this.assertFilename(filename);
+    const config = this.s3Config();
+    if (!config) return null;
+    return getSignedUrl(
+      config.client as unknown as Parameters<typeof getSignedUrl>[0],
+      new GetObjectCommand({
+        Bucket: config.bucket,
+        Key: this.objectKey(filename),
+      }),
+      { expiresIn: 5 * 60 },
+    );
+  }
+
+  private isBunnyS3Endpoint() {
+    const endpoint = (
+      process.env.BUNNY_STORAGE_S3_ENDPOINT ||
+      process.env.S3_ENDPOINT ||
+      process.env.ENDPOINT ||
+      process.env.AWS_ENDPOINT_URL ||
+      ''
+    ).trim();
+    try {
+      return new URL(endpoint).hostname.endsWith('.storage.bunnycdn.com');
+    } catch {
+      return false;
+    }
   }
 
   private assertFilename(filename: string) {

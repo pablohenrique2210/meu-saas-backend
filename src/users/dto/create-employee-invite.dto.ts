@@ -14,6 +14,10 @@ import {
 } from 'class-validator';
 
 export class CreateEmployeeInviteDto {
+  @IsUUID('4')
+  @IsOptional()
+  companyId?: string;
+
   @IsString()
   @MinLength(2)
   name: string;

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -13,6 +14,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { assertValidCpf, cpfHashesMatch, hashCpf } from './cpf';
 import { ClaimEmployeeInviteDto } from './dto/claim-employee-invite.dto';
 import { CreateEmployeeInviteDto } from './dto/create-employee-invite.dto';
+import {
+  isPlatformAdministrator,
+  resolveManagedCompanyId,
+} from '../auth/company-scope';
 
 const inviteViewSelect = {
   id: true,
@@ -38,6 +43,8 @@ const inviteViewSelect = {
 
 @Injectable()
 export class EmployeeInvitationsService {
+  private readonly logger = new Logger(EmployeeInvitationsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   async listPrograms() {
@@ -52,11 +59,12 @@ export class EmployeeInvitationsService {
     });
   }
 
-  async list(manager: User) {
-    await this.expireOldInvites(manager.companyId);
+  async list(manager: User, requestedCompanyId?: string) {
+    const companyId = resolveManagedCompanyId(manager, requestedCompanyId);
+    await this.expireOldInvites(companyId);
 
     const invites = await this.prisma.employeeInvite.findMany({
-      where: { companyId: manager.companyId },
+      where: { companyId },
       orderBy: { createdAt: 'desc' },
       select: inviteViewSelect,
     });
@@ -66,6 +74,7 @@ export class EmployeeInvitationsService {
 
   async create(manager: User, dto: CreateEmployeeInviteDto) {
     this.assertRoleCanBeAssigned(manager, dto.role);
+    const companyId = resolveManagedCompanyId(manager, dto.companyId);
 
     const cpf = assertValidCpf(dto.cpf);
     const email = dto.email.trim().toLowerCase();
@@ -76,7 +85,7 @@ export class EmployeeInvitationsService {
       this.prisma.user.findUnique({ where: { email } }),
       this.prisma.employeeInvite.findFirst({
         where: {
-          companyId: manager.companyId,
+          companyId,
           email,
           status: 'PENDING',
           expiresAt: { gt: new Date() },
@@ -109,7 +118,7 @@ export class EmployeeInvitationsService {
 
     const invite = await this.prisma.employeeInvite.create({
       data: {
-        companyId: manager.companyId,
+        companyId,
         createdByUserId: manager.id,
         name,
         email,
@@ -152,40 +161,80 @@ export class EmployeeInvitationsService {
     const invite = await this.prisma.employeeInvite.findFirst({
       where: {
         id: inviteId,
-        companyId: manager.companyId,
-        status: 'PENDING',
       },
     });
 
-    if (!invite) {
+    if (
+      !invite ||
+      invite.status !== 'PENDING' ||
+      (!isPlatformAdministrator(manager) &&
+        invite.companyId !== manager.companyId)
+    ) {
       throw new NotFoundException('Convite pendente não encontrado.');
     }
 
-    if (invite.clerkInvitationId) {
-      const clerkClient = this.getClerkClient();
-      await clerkClient.invitations.revokeInvitation(invite.clerkInvitationId);
-    }
-
+    // The database is the authorization source of truth. Revoke it first so an
+    // already accepted/expired Clerk invitation can never keep access pending.
     const revoked = await this.prisma.employeeInvite.update({
       where: { id: invite.id },
       data: { status: 'REVOKED' },
       select: inviteViewSelect,
     });
+
+    if (invite.clerkInvitationId) {
+      try {
+        await this.getClerkClient().invitations.revokeInvitation(
+          invite.clerkInvitationId,
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Invite ${invite.id} was revoked internally, but Clerk could not revoke its invitation (${error instanceof Error ? error.name : 'unknown'}).`,
+        );
+      }
+    }
     return this.toView(revoked);
+  }
+
+  async getActivationStatus(clerkUserId: string) {
+    const clerkUser = await this.getClerkClient().users.getUser(clerkUserId);
+    const primaryEmail = clerkUser.emailAddresses.find(
+      (email) => email.id === clerkUser.primaryEmailAddressId,
+    );
+    if (!primaryEmail || primaryEmail.verification?.status !== 'verified') {
+      return { requiresActivation: false, emailVerified: false };
+    }
+
+    const email = primaryEmail.emailAddress.trim().toLowerCase();
+    const pendingInvite = await this.prisma.employeeInvite.findFirst({
+      where: { email, status: 'PENDING', expiresAt: { gt: new Date() } },
+      select: { id: true },
+    });
+    return {
+      requiresActivation: Boolean(pendingInvite),
+      emailVerified: true,
+    };
   }
 
   async getInvitationLink(manager: User, inviteId: string) {
     const invite = await this.prisma.employeeInvite.findFirst({
       where: {
         id: inviteId,
-        companyId: manager.companyId,
-        status: 'PENDING',
-        expiresAt: { gt: new Date() },
       },
-      select: { clerkInvitationId: true },
+      select: {
+        clerkInvitationId: true,
+        companyId: true,
+        status: true,
+        expiresAt: true,
+      },
     });
 
-    if (!invite?.clerkInvitationId) {
+    if (
+      !invite?.clerkInvitationId ||
+      invite.status !== 'PENDING' ||
+      invite.expiresAt <= new Date() ||
+      (!isPlatformAdministrator(manager) &&
+        invite.companyId !== manager.companyId)
+    ) {
       throw new NotFoundException('Convite pendente não encontrado.');
     }
 
@@ -207,16 +256,6 @@ export class EmployeeInvitationsService {
   }
 
   async claim(clerkUserId: string, dto: ClaimEmployeeInviteDto) {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { id: clerkUserId },
-      select: { id: true },
-    });
-    if (existingUser) {
-      throw new ConflictException(
-        'A conta conectada já possui acesso. Saia e entre com o e-mail que recebeu o convite.',
-      );
-    }
-
     const clerkUser = await this.getClerkClient().users.getUser(clerkUserId);
     const primaryEmail = clerkUser.emailAddresses.find(
       (email) => email.id === clerkUser.primaryEmailAddressId,
@@ -263,19 +302,45 @@ export class EmployeeInvitationsService {
         );
       }
 
-      const user = await transaction.user.create({
-        data: {
-          id: clerkUserId,
-          companyId: invite.companyId,
-          name: invite.name,
-          email,
-          role: invite.role,
-          position: invite.position,
-          department: invite.department,
-          phone: invite.phone,
-          hireDate: invite.hireDate,
-        },
+      const existingUser = await transaction.user.findUnique({
+        where: { id: clerkUserId },
       });
+      if (
+        existingUser &&
+        (existingUser.email.trim().toLowerCase() !== email ||
+          existingUser.companyId !== invite.companyId)
+      ) {
+        throw new ConflictException(
+          'Esta conta já está vinculada a outro perfil ou empresa. Saia e use o e-mail que recebeu o convite.',
+        );
+      }
+
+      const user = existingUser
+        ? await transaction.user.update({
+            where: { id: clerkUserId },
+            data: {
+              name: invite.name,
+              role: invite.role,
+              position: invite.position,
+              department: invite.department,
+              phone: invite.phone,
+              hireDate: invite.hireDate,
+              isActive: true,
+            },
+          })
+        : await transaction.user.create({
+            data: {
+              id: clerkUserId,
+              companyId: invite.companyId,
+              name: invite.name,
+              email,
+              role: invite.role,
+              position: invite.position,
+              department: invite.department,
+              phone: invite.phone,
+              hireDate: invite.hireDate,
+            },
+          });
 
       if (invite.courseAccesses.length > 0) {
         await transaction.userCourseAccess.createMany({
@@ -284,6 +349,7 @@ export class EmployeeInvitationsService {
             courseId,
             grantedByUserId: invite.createdByUserId,
           })),
+          skipDuplicates: true,
         });
       }
 

@@ -468,11 +468,19 @@ export class ContentService {
       throw new BadRequestException('Nome de arquivo inválido.');
     }
     const uploadedSuffix = `/${filename}`;
+    const protectedDownloadSuffix = `/${filename}/download`;
+    const storedMaterialUrl = {
+      OR: [
+        { url: { endsWith: uploadedSuffix } },
+        { url: { endsWith: protectedDownloadSuffix } },
+      ],
+    } satisfies Prisma.AttachmentWhereInput;
     const lesson = await this.prisma.lesson.findFirst({
       where: {
         OR: [
           { contentUrl: { endsWith: uploadedSuffix } },
-          { attachments: { some: { url: { endsWith: uploadedSuffix } } } },
+          { contentUrl: { endsWith: protectedDownloadSuffix } },
+          { attachments: { some: storedMaterialUrl } },
         ],
         ...(user.role === Role.ADMIN || user.role === Role.HR_MANAGER
           ? {}
@@ -486,7 +494,7 @@ export class ContentService {
         title: true,
         contentUrl: true,
         attachments: {
-          where: { url: { endsWith: uploadedSuffix } },
+          where: storedMaterialUrl,
           select: { title: true },
           take: 1,
         },
@@ -496,12 +504,14 @@ export class ContentService {
       throw new NotFoundException('Material não encontrado ou sem acesso.');
     }
 
-    const asset = await this.assets.open(filename);
+    const signedUrl = await this.assets.createSignedDownloadUrl(filename);
+    const asset = signedUrl ? null : await this.assets.open(filename);
     const title =
       lesson.attachments[0]?.title?.trim() || lesson.title.trim() || 'material';
     const safeTitle = title.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-');
     return {
       asset,
+      signedUrl,
       downloadName: `${safeTitle}${extname(filename)}`,
     };
   }

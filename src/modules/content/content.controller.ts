@@ -19,6 +19,7 @@ import type { User } from '@prisma/client';
 import type { Response } from 'express';
 import {
   IsBoolean,
+  IsIn,
   ArrayMinSize,
   IsNumber,
   IsOptional,
@@ -133,6 +134,11 @@ export class CompleteDirectUploadDto {
   @IsString()
   @MaxLength(150)
   mimeType: string;
+
+  @IsString()
+  @IsIn(['MATERIAL', 'COVER'])
+  @IsOptional()
+  purpose?: 'MATERIAL' | 'COVER';
 }
 
 export class AbortDirectUploadDto {
@@ -279,7 +285,12 @@ export class ContentController {
     await this.assets.completeDirectUpload(dto.filename, dto.uploadId);
     return {
       complete: true,
-      url: publicUploadUrl(dto.filename),
+      // Materiais ficam atrás da autenticação. Capas precisam ser públicas
+      // para aparecer no catálogo, mas continuam armazenadas no Bunny Storage.
+      url:
+        dto.purpose === 'COVER'
+          ? publicUploadUrl(dto.filename)
+          : `/api/courses/materials/${encodeURIComponent(dto.filename)}/download`,
       originalName: dto.originalName,
       mimeType: dto.mimeType,
       materialType: this.uploadService.materialTypeFor(
@@ -307,6 +318,14 @@ export class ContentController {
       user,
       filename,
     );
+    if (material.signedUrl) {
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.redirect(302, material.signedUrl);
+      return;
+    }
+    if (!material.asset) {
+      throw new BadRequestException('Material sem fonte de download.');
+    }
     response.setHeader('Content-Type', material.asset.contentType);
     response.setHeader('Content-Length', String(material.asset.contentLength));
     response.setHeader(

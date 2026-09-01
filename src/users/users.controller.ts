@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { Role } from '@prisma/client';
@@ -56,8 +57,11 @@ export class UsersController {
   @Get()
   @UseGuards(RhAccessGuard)
   @Roles(Role.ADMIN, Role.HR_MANAGER)
-  listUsers(@CurrentUser() manager: User) {
-    return this.usersService.findEmployeesForHR(manager);
+  listUsers(
+    @CurrentUser() manager: User,
+    @Query('companyId') companyId?: string,
+  ) {
+    return this.usersService.findEmployeesForHR(manager, companyId);
   }
 
   @Get(':id')

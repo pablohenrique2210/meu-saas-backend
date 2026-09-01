@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import type { Response } from 'express';
@@ -21,25 +21,34 @@ export class ReportsController {
   ) {}
 
   @Get('courses')
-  listCourses(@CurrentUser() manager: User) {
-    return this.reportsService.listCourses(manager);
+  listCourses(
+    @CurrentUser() manager: User,
+    @Query('companyId') companyId?: string,
+  ) {
+    return this.reportsService.listCourses(manager, companyId);
   }
 
   @Get('courses/:courseId/preview')
   preview(
     @CurrentUser() manager: User,
     @Param('courseId') courseId: string,
+    @Query('companyId') companyId?: string,
   ) {
-    return this.reportsService.buildCourseReport(manager, courseId);
+    return this.reportsService.buildCourseReport(manager, courseId, companyId);
   }
 
   @Get('courses/:courseId/pdf')
   async download(
     @CurrentUser() manager: User,
     @Param('courseId') courseId: string,
+    @Query('companyId') companyId: string | undefined,
     @Res() response: Response,
   ) {
-    const report = await this.reportsService.buildCourseReport(manager, courseId);
+    const report = await this.reportsService.buildCourseReport(
+      manager,
+      courseId,
+      companyId,
+    );
     const pdf = await this.pdfService.generate(report);
     const filename = `diagnostico-${this.slug(report.company.name)}-${this.slug(report.course.title)}.pdf`;
     response.setHeader('Content-Type', 'application/pdf');

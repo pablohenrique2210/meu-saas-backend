@@ -8,6 +8,7 @@ import { GamesModule } from './games/games.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { uploadsRootPath } from './config/storage';
+import { CompaniesModule } from './companies/companies.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { uploadsRootPath } from './config/storage';
     UsersModule,
     ReportsModule,
     GamesModule,
+    CompaniesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

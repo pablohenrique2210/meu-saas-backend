@@ -7,6 +7,7 @@ import type {
   ModuleReport,
   ProgressStatus,
 } from './course-report.types';
+import { resolveManagedCompanyId } from '../auth/company-scope';
 
 const percent = (value: number, total: number) =>
   total > 0 ? Math.round((value / total) * 100) : 0;
@@ -38,7 +39,8 @@ function statusFor(
 export class ReportsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async listCourses(manager: User) {
+  async listCourses(manager: User, requestedCompanyId?: string) {
+    const companyId = resolveManagedCompanyId(manager, requestedCompanyId);
     const courses = await this.prisma.course.findMany({
       orderBy: { title: 'asc' },
       select: {
@@ -51,13 +53,13 @@ export class ReportsService {
             modules: true,
             userAccesses: {
               where: {
-                user: { companyId: manager.companyId },
+                user: { companyId },
               },
             },
             inviteAccesses: {
               where: {
                 invite: {
-                  companyId: manager.companyId,
+                  companyId,
                   status: 'PENDING',
                   claimedByUserId: null,
                   expiresAt: { gt: new Date() },
@@ -88,7 +90,9 @@ export class ReportsService {
   async buildCourseReport(
     manager: User,
     courseId: string,
+    requestedCompanyId?: string,
   ): Promise<CourseProgressReport> {
+    const companyId = resolveManagedCompanyId(manager, requestedCompanyId);
     const course = await this.prisma.course.findFirst({
       where: {
         id: courseId,
@@ -106,7 +110,7 @@ export class ReportsService {
     }
 
     const company = await this.prisma.company.findUnique({
-      where: { id: manager.companyId },
+      where: { id: companyId },
       select: { id: true, name: true },
     });
     if (!company) throw new NotFoundException('Empresa não encontrada.');
@@ -115,7 +119,7 @@ export class ReportsService {
       this.prisma.userCourseAccess.findMany({
         where: {
           courseId,
-          user: { companyId: manager.companyId },
+          user: { companyId },
         },
         orderBy: { user: { name: 'asc' } },
         include: {
@@ -133,7 +137,7 @@ export class ReportsService {
       }),
       this.prisma.employeeInvite.findMany({
         where: {
-          companyId: manager.companyId,
+          companyId,
           status: 'PENDING',
           claimedByUserId: null,
           expiresAt: { gt: new Date() },

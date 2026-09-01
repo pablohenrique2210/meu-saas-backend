@@ -1,49 +1,22 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Patch,
-  Param,
-  Delete,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Role } from '@prisma/client';
+import type { User } from '@prisma/client';
 import { CompaniesService } from './companies.service';
-import { CreateCompanyDto } from './dto/create-company.dto';
-import { UpdateCompanyDto } from './dto/update-company.dto';
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { DatabaseUserGuard } from '../auth/database-user.guard';
+import { RhAccessGuard } from '../auth/rh-access.guard';
+import { Roles } from '../auth/roles.decorator';
+import { RolesGuard } from '../auth/roles.guard';
 
 @Controller('companies')
-@UseGuards(ClerkAuthGuard) // 👈 Movemos para aqui! Agora TODAS as rotas abaixo estão protegidas.
+@UseGuards(ClerkAuthGuard, DatabaseUserGuard, RolesGuard, RhAccessGuard)
+@Roles(Role.ADMIN, Role.HR_MANAGER)
 export class CompaniesController {
   constructor(private readonly companiesService: CompaniesService) {}
 
-  @Post()
-  create(@Body() createCompanyDto: CreateCompanyDto) {
-    return this.companiesService.create(createCompanyDto);
-  }
-
   @Get()
-  findAll() {
-    return this.companiesService.findAll();
-  }
-
-  // ... (o teu @Post e findAll continuam iguais lá em cima)
-
-  // ... (imports e parte de cima continuam iguais)
-
-  @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.companiesService.findOne(id); // Tiramos o '+'
-  }
-
-  @Patch(':id')
-  update(@Param('id') id: string, @Body() updateCompanyDto: UpdateCompanyDto) {
-    return this.companiesService.update(id, updateCompanyDto); // Tiramos o '+'
-  }
-
-  @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.companiesService.remove(id); // Tiramos o '+'
+  findAvailable(@CurrentUser() manager: User) {
+    return this.companiesService.findAvailable(manager);
   }
 }
