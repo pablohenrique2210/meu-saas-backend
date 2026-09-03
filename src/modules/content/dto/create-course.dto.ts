@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsBoolean,
   IsArray,
+  IsISO8601,
 } from 'class-validator';
 
 export class CreateCourseDto {
@@ -30,6 +31,10 @@ export class CreateCourseDto {
   @IsBoolean()
   @IsOptional()
   isPublished?: boolean;
+
+  @IsISO8601()
+  @IsOptional()
+  availableAt?: string | null;
 
   // 👇 ESTA É A LINHA QUE FALTA PARA O ERRO DESAPARECER!
   @IsArray()

@@ -35,6 +35,8 @@ function accessibleLesson(
     duration: number;
     minimumWatchSeconds: number;
     availableAt: Date | null;
+    courseAvailableAt: Date | null;
+    lessonAvailableAt: Date | null;
     quizConfig: Record<string, unknown> | null;
     orderedLessonIds: string[];
     modules: Array<{
@@ -47,6 +49,7 @@ function accessibleLesson(
   const id = overrides.id ?? 'lesson_1';
   return {
     id,
+    availableAt: overrides.lessonAvailableAt ?? null,
     type: LessonType.VIDEO,
     duration: overrides.duration ?? 10,
     minimumWatchSeconds: overrides.minimumWatchSeconds ?? 0,
@@ -54,12 +57,14 @@ function accessibleLesson(
     module: {
       availableAt: overrides.availableAt ?? null,
       course: {
+        availableAt: overrides.courseAvailableAt ?? null,
         modules: overrides.modules
           ? overrides.modules.map((courseModule) => ({
               id: courseModule.id,
               gameType: courseModule.gameType,
               lessons: courseModule.lessonIds.map((lessonId) => ({
                 id: lessonId,
+                availableAt: null,
                 type: LessonType.VIDEO,
                 duration: overrides.duration ?? 10,
                 minimumWatchSeconds: 0,
@@ -72,6 +77,7 @@ function accessibleLesson(
                 lessons: (overrides.orderedLessonIds ?? [id]).map(
                   (lessonId) => ({
                     id: lessonId,
+                    availableAt: null,
                     type: LessonType.VIDEO,
                     duration: overrides.duration ?? 10,
                     minimumWatchSeconds:
@@ -165,7 +171,31 @@ describe('ContentService access control', () => {
     await expect(
       service.getProgress(employee, 'lesson_1'),
     ).rejects.toMatchObject({
-      response: expect.objectContaining({ code: 'MODULE_NOT_AVAILABLE_YET' }),
+      response: expect.objectContaining({ code: 'CONTENT_NOT_AVAILABLE_YET' }),
+    });
+  });
+
+  it('blocks a collaborator before the course release', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({ courseAvailableAt: new Date(Date.now() + 60_000) }),
+    );
+
+    await expect(
+      service.getProgress(employee, 'lesson_1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'CONTENT_NOT_AVAILABLE_YET' }),
+    });
+  });
+
+  it('blocks a collaborator before the lesson release', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({ lessonAvailableAt: new Date(Date.now() + 60_000) }),
+    );
+
+    await expect(
+      service.getProgress(employee, 'lesson_1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'CONTENT_NOT_AVAILABLE_YET' }),
     });
   });
 

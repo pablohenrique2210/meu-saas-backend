@@ -64,6 +64,7 @@ export class GameResultsService {
         availableAt: true,
         gameType: true,
         gameConfig: true,
+        course: { select: { availableAt: true } },
         lessons: {
           select: {
             id: true,
@@ -79,7 +80,11 @@ export class GameResultsService {
       throw new NotFoundException('Módulo não encontrado ou sem acesso.');
     }
 
-    this.assertModuleAvailable(user, courseModule.availableAt);
+    this.assertModuleAvailable(
+      user,
+      courseModule.course.availableAt,
+      courseModule.availableAt,
+    );
 
     if (!courseModule.gameType || !courseModule.gameConfig) {
       throw new NotFoundException(
@@ -145,7 +150,7 @@ export class GameResultsService {
             minimumWatchSeconds: true,
           },
         },
-        course: { select: { id: true, title: true } },
+        course: { select: { id: true, title: true, availableAt: true } },
       },
     });
 
@@ -155,7 +160,11 @@ export class GameResultsService {
       );
     }
 
-    this.assertModuleAvailable(user, courseModule.availableAt);
+    this.assertModuleAvailable(
+      user,
+      courseModule.course.availableAt,
+      courseModule.availableAt,
+    );
 
     if (user.role === Role.USER) {
       await this.assertModuleLessonsCompleted(user, courseModule.lessons);
@@ -248,12 +257,19 @@ export class GameResultsService {
     }
   }
 
-  private assertModuleAvailable(user: User, availableAt: Date | null) {
-    if (
-      user.role === Role.USER &&
-      availableAt &&
-      availableAt.getTime() > Date.now()
-    ) {
+  private assertModuleAvailable(
+    user: User,
+    courseAvailableAt: Date | null,
+    moduleAvailableAt: Date | null,
+  ) {
+    const futureDates = [courseAvailableAt, moduleAvailableAt].filter(
+      (value): value is Date => Boolean(value && value.getTime() > Date.now()),
+    );
+    const availableAt =
+      futureDates.length > 0
+        ? new Date(Math.max(...futureDates.map((value) => value.getTime())))
+        : null;
+    if (user.role === Role.USER && availableAt) {
       throw new ForbiddenException({
         code: 'MODULE_NOT_AVAILABLE_YET',
         message: 'Este módulo ainda não está disponível.',

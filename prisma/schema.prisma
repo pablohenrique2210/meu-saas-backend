@@ -110,6 +110,7 @@ model Course {
   author      String? // 👈 NOVO: Autor do curso
   coverUrl    String? // 👈 NOVO: URL da Capa do curso
   isPublished Boolean  @default(false)
+  availableAt DateTime?
   createdAt   DateTime @default(now())
 
   modules        Module[]
@@ -263,6 +264,7 @@ model Lesson {
   minimumWatchSeconds Int        @default(0)
   order               Int        @default(0)
   isPublished         Boolean    @default(false)
+  availableAt         DateTime?
   quizConfig          Json?
 
   module      Module             @relation(fields: [moduleId], references: [id], onDelete: Cascade)

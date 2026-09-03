@@ -24,6 +24,7 @@ import { minimumRequiredWatchSeconds } from './watch-time';
 
 type AccessibleLesson = {
   id: string;
+  availableAt: Date | null;
   contentUrl: string | null;
   type: LessonType;
   duration: number;
@@ -32,11 +33,13 @@ type AccessibleLesson = {
   module: {
     availableAt: Date | null;
     course: {
+      availableAt: Date | null;
       modules: Array<{
         id: string;
         gameType: ModuleGameTypeValue | null;
         lessons: Array<{
           id: string;
+          availableAt: Date | null;
           type: LessonType;
           duration: number;
           minimumWatchSeconds: number;
@@ -443,11 +446,12 @@ export class ContentService {
   // 📚 CRIAÇÃO E LEITURA DE CURSOS
   // ==========================================
   async createCourse(dto: CreateCourseDto) {
-    const { modules: inputModules, ...courseData } = dto;
+    const { modules: inputModules, availableAt, ...courseData } = dto;
     const modules = await this.normalizeBunnyModules(inputModules);
     return this.prisma.course.create({
       data: {
         ...courseData,
+        availableAt: this.availableAtFor(availableAt),
         modules: {
           create: modules?.map((mod, modIndex) => ({
             title: mod.title || `Módulo ${modIndex + 1}`,
@@ -457,6 +461,7 @@ export class ContentService {
             lessons: {
               create: mod.lessons?.map((lesson, lessonIndex) => ({
                 title: lesson.title || `Aula ${lessonIndex + 1}`,
+                availableAt: this.availableAtFor(lesson.availableAt),
                 type: lesson.type,
                 contentUrl: lesson.contentUrl || '',
                 duration: Number(lesson.duration) || 0,
@@ -494,7 +499,7 @@ export class ContentService {
         // 🚀 Trazemos os IDs das aulas para o Frontend conseguir fazer as contas do progresso!
         modules: {
           include: {
-            lessons: { select: { id: true } },
+            lessons: { select: { id: true, title: true, availableAt: true } },
             gameResults: {
               where: { employeeId: user.id },
               select: { gameType: true },
@@ -597,18 +602,25 @@ export class ContentService {
 
     if (user.role !== Role.USER) return course;
 
+    const now = new Date();
+    const courseUnavailable = Boolean(
+      course.availableAt && course.availableAt > now,
+    );
     return {
       ...course,
       modules: course.modules.map((courseModule) => {
-        const unavailable =
-          courseModule.availableAt && courseModule.availableAt > new Date();
-        if (!unavailable) return courseModule;
+        const moduleUnavailable = Boolean(
+          courseUnavailable ||
+            (courseModule.availableAt && courseModule.availableAt > now),
+        );
         return {
           ...courseModule,
           lessons: courseModule.lessons.map((lesson) => ({
             ...lesson,
-            contentUrl: '',
-            attachments: [],
+            ...(moduleUnavailable ||
+            (lesson.availableAt && lesson.availableAt > now)
+              ? { contentUrl: '', attachments: [] }
+              : {}),
           })),
         };
       }),
@@ -638,8 +650,22 @@ export class ContentService {
         ...(user.role === Role.ADMIN || user.role === Role.HR_MANAGER
           ? {}
           : {
+              AND: [
+                {
+                  OR: [
+                    { availableAt: null },
+                    { availableAt: { lte: new Date() } },
+                  ],
+                },
+              ],
               module: {
-                course: { userAccesses: { some: { userId: user.id } } },
+                course: {
+                  userAccesses: { some: { userId: user.id } },
+                  OR: [
+                    { availableAt: null },
+                    { availableAt: { lte: new Date() } },
+                  ],
+                },
                 OR: [
                   { availableAt: null },
                   { availableAt: { lte: new Date() } },
@@ -679,7 +705,7 @@ export class ContentService {
   // ✏️ ATUALIZAR INFORMAÇÕES E MÓDULOS DO CURSO
   // ==========================================
   async updateCourse(courseId: string, data: any) {
-    const { modules: inputModules, ...courseData } = data;
+    const { modules: inputModules, availableAt, ...courseData } = data;
     const modules = await this.normalizeBunnyModules(inputModules);
 
     // 1. Apanhar os IDs reais que chegaram do Frontend (Ignorar os IDs temporários)
@@ -692,6 +718,7 @@ export class ContentService {
       where: { id: courseId },
       data: {
         ...courseData,
+        availableAt: this.availableAtFor(availableAt),
         // 2. O Motor de Sincronização Inteligente do Prisma
         modules: modules
           ? {
@@ -724,6 +751,7 @@ export class ContentService {
                       create: mod.lessons?.map(
                         (lesson: any, lessonIndex: number) => ({
                           title: lesson.title,
+                          availableAt: this.availableAtFor(lesson.availableAt),
                           type: lesson.type,
                           contentUrl: lesson.contentUrl || '',
                           duration: Number(lesson.duration) || 0,
@@ -767,6 +795,9 @@ export class ContentService {
                             },
                             create: {
                               title: lesson.title,
+                              availableAt: this.availableAtFor(
+                                lesson.availableAt,
+                              ),
                               type: lesson.type,
                               contentUrl: lesson.contentUrl || '',
                               duration: Number(lesson.duration) || 0,
@@ -786,6 +817,9 @@ export class ContentService {
                             },
                             update: {
                               title: lesson.title,
+                              availableAt: this.availableAtFor(
+                                lesson.availableAt,
+                              ),
                               type: lesson.type,
                               contentUrl: lesson.contentUrl || '',
                               duration: Number(lesson.duration) || 0,
@@ -860,6 +894,7 @@ export class ContentService {
       },
       select: {
         id: true,
+        availableAt: true,
         type: true,
         contentUrl: true,
         duration: true,
@@ -870,6 +905,7 @@ export class ContentService {
             availableAt: true,
             course: {
               select: {
+                availableAt: true,
                 modules: {
                   orderBy: { order: 'asc' },
                   select: {
@@ -879,6 +915,7 @@ export class ContentService {
                       orderBy: { order: 'asc' },
                       select: {
                         id: true,
+                        availableAt: true,
                         type: true,
                         duration: true,
                         minimumWatchSeconds: true,
@@ -898,15 +935,16 @@ export class ContentService {
       throw new NotFoundException('Aula não encontrada ou sem acesso.');
     }
 
-    if (
-      user.role === Role.USER &&
-      lesson.module.availableAt &&
-      lesson.module.availableAt.getTime() > Date.now()
-    ) {
+    const unavailableUntil = this.unavailableUntil(
+      lesson.module.course.availableAt,
+      lesson.module.availableAt,
+      lesson.availableAt,
+    );
+    if (user.role === Role.USER && unavailableUntil) {
       throw new ForbiddenException({
-        code: 'MODULE_NOT_AVAILABLE_YET',
-        message: 'Este módulo ainda não está disponível.',
-        availableAt: lesson.module.availableAt.toISOString(),
+        code: 'CONTENT_NOT_AVAILABLE_YET',
+        message: 'Este conteúdo ainda não está disponível.',
+        availableAt: unavailableUntil.toISOString(),
       });
     }
 
@@ -1301,5 +1339,14 @@ export class ContentService {
       throw new BadRequestException('Data de liberação do módulo inválida.');
     }
     return availableAt;
+  }
+
+  private unavailableUntil(...values: Array<Date | null | undefined>) {
+    const now = Date.now();
+    const futureDates = values.filter(
+      (value): value is Date => Boolean(value && value.getTime() > now),
+    );
+    if (futureDates.length === 0) return null;
+    return new Date(Math.max(...futureDates.map((value) => value.getTime())));
   }
 }

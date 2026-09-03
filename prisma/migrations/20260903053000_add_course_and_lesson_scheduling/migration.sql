@@ -1,0 +1,2 @@
+ALTER TABLE "Course" ADD COLUMN "availableAt" TIMESTAMP(3);
+ALTER TABLE "Lesson" ADD COLUMN "availableAt" TIMESTAMP(3);
