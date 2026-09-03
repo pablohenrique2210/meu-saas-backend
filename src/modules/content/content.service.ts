@@ -866,6 +866,53 @@ export class ContentService {
     });
   }
 
+  async updateCourseSchedule(
+    courseId: string,
+    schedule: {
+      availableAt?: string | null;
+      modules: Array<{
+        id: string;
+        availableAt?: string | null;
+        lessons: Array<{ id: string; availableAt?: string | null }>;
+      }>;
+    },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.course.update({
+        where: { id: courseId },
+        data: { availableAt: this.availableAtFor(schedule.availableAt) },
+      });
+
+      for (const courseModule of schedule.modules) {
+        const moduleUpdate = await tx.module.updateMany({
+          where: { id: courseModule.id, courseId },
+          data: {
+            availableAt: this.availableAtFor(courseModule.availableAt),
+          },
+        });
+        if (moduleUpdate.count !== 1) {
+          throw new BadRequestException(
+            'Um dos módulos não pertence a este curso.',
+          );
+        }
+
+        for (const lesson of courseModule.lessons) {
+          const lessonUpdate = await tx.lesson.updateMany({
+            where: { id: lesson.id, moduleId: courseModule.id },
+            data: { availableAt: this.availableAtFor(lesson.availableAt) },
+          });
+          if (lessonUpdate.count !== 1) {
+            throw new BadRequestException(
+              'Uma das aulas não pertence ao módulo informado.',
+            );
+          }
+        }
+      }
+
+      return { updated: true };
+    });
+  }
+
   // ==========================================
   // 🗑️ EXCLUIR CURSO
   // ==========================================

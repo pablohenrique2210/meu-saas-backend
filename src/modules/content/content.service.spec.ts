@@ -614,4 +614,48 @@ describe('ContentService course editing', () => {
       }),
     );
   });
+
+  it('updates only scheduling fields without processing course content', async () => {
+    const tx = {
+      course: { update: jest.fn().mockResolvedValue({ id: 'course_1' }) },
+      module: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+      lesson: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    };
+    const prisma = {
+      $transaction: jest.fn(
+        async (operation: (client: typeof tx) => Promise<unknown>) =>
+          operation(tx),
+      ),
+    };
+    const service = new ContentService(prisma as unknown as PrismaService);
+
+    await service.updateCourseSchedule('course_1', {
+      availableAt: null,
+      modules: [
+        {
+          id: 'module_1',
+          availableAt: '2026-09-04T16:00:00.000Z',
+          lessons: [
+            {
+              id: 'lesson_1',
+              availableAt: '2026-09-04T16:00:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(tx.course.update).toHaveBeenCalledWith({
+      where: { id: 'course_1' },
+      data: { availableAt: null },
+    });
+    expect(tx.module.updateMany).toHaveBeenCalledWith({
+      where: { id: 'module_1', courseId: 'course_1' },
+      data: { availableAt: new Date('2026-09-04T16:00:00.000Z') },
+    });
+    expect(tx.lesson.updateMany).toHaveBeenCalledWith({
+      where: { id: 'lesson_1', moduleId: 'module_1' },
+      data: { availableAt: new Date('2026-09-04T16:00:00.000Z') },
+    });
+  });
 });

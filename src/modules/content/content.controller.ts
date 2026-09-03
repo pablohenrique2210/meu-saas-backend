@@ -23,6 +23,7 @@ import {
   IsArray,
   ArrayMinSize,
   IsNumber,
+  IsISO8601,
   IsOptional,
   IsString,
   MaxLength,
@@ -109,6 +110,40 @@ export class SaveLessonNoteDto {
   @IsString()
   @MaxLength(20_000)
   content: string;
+}
+
+export class CourseScheduleLessonDto {
+  @IsString()
+  id: string;
+
+  @IsISO8601()
+  @IsOptional()
+  availableAt?: string | null;
+}
+
+export class CourseScheduleModuleDto {
+  @IsString()
+  id: string;
+
+  @IsISO8601()
+  @IsOptional()
+  availableAt?: string | null;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CourseScheduleLessonDto)
+  lessons: CourseScheduleLessonDto[];
+}
+
+export class UpdateCourseScheduleDto {
+  @IsISO8601()
+  @IsOptional()
+  availableAt?: string | null;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CourseScheduleModuleDto)
+  modules: CourseScheduleModuleDto[];
 }
 
 export class LinkLessonVideoDto {
@@ -384,6 +419,16 @@ export class ContentController {
   @Roles(Role.ADMIN, Role.HR_MANAGER)
   updateCourse(@Param('id') id: string, @Body() body: unknown) {
     return this.contentService.updateCourse(id, body);
+  }
+
+  @Put(':id/schedule')
+  @UseGuards(RhAccessGuard)
+  @Roles(Role.ADMIN, Role.HR_MANAGER)
+  updateCourseSchedule(
+    @Param('id') id: string,
+    @Body() dto: UpdateCourseScheduleDto,
+  ) {
+    return this.contentService.updateCourseSchedule(id, dto);
   }
 
   @Post()
