@@ -1246,6 +1246,26 @@ export class ContentService {
             'Vídeos Bunny devem usar o tipo VIDEO.',
           );
         const reference = `bunny://${ids.libraryId}/${ids.videoId}`;
+        const storedDurationSeconds = Math.round(
+          Number(lesson.minimumWatchSeconds) || Number(lesson.duration) * 60,
+        );
+        // Referências canônicas são geradas pelo próprio backend depois da
+        // validação inicial. Ao editar apenas título, agenda ou materiais, não
+        // devemos tornar a gravação dependente de uma nova consulta ao Bunny.
+        if (
+          url === reference &&
+          typeof lesson.id === 'string' &&
+          !lesson.id.startsWith('temp_') &&
+          Number.isFinite(storedDurationSeconds) &&
+          storedDurationSeconds > 0
+        ) {
+          lessons.push({
+            ...lesson,
+            contentUrl: reference,
+            minimumWatchSeconds: storedDurationSeconds,
+          });
+          continue;
+        }
         let video = metadata.get(reference);
         if (!video) {
           video = await this.bunny.metadata(reference);

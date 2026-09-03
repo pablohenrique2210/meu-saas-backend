@@ -7,6 +7,7 @@ import { LessonType, Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ContentService } from './content.service';
+import { BunnyStreamService } from './bunny-stream.service';
 
 const employee: User = {
   id: 'user_employee',
@@ -569,5 +570,48 @@ describe('ContentService access control', () => {
     });
 
     expect(prisma.course.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ContentService course editing', () => {
+  it('does not query Bunny again when an existing canonical video is unchanged', async () => {
+    const bunny = {
+      metadata: jest.fn().mockRejectedValue(new Error('Bunny unavailable')),
+    };
+    const service = new ContentService(
+      {} as PrismaService,
+      undefined,
+      bunny as unknown as BunnyStreamService,
+    );
+    const normalize = (
+      service as unknown as {
+        normalizeBunnyModules: (modules: unknown[]) => Promise<any[]>;
+      }
+    ).normalizeBunnyModules.bind(service);
+
+    const modules = await normalize([
+      {
+        id: 'module_1',
+        lessons: [
+          {
+            id: 'lesson_1',
+            type: LessonType.VIDEO,
+            contentUrl:
+              'bunny://123/808a965b-96d9-49a0-9e29-fb6379468984',
+            duration: 11,
+            minimumWatchSeconds: 643,
+            availableAt: '2026-09-04T16:00:00.000Z',
+          },
+        ],
+      },
+    ]);
+
+    expect(bunny.metadata).not.toHaveBeenCalled();
+    expect(modules[0].lessons[0]).toEqual(
+      expect.objectContaining({
+        minimumWatchSeconds: 643,
+        availableAt: '2026-09-04T16:00:00.000Z',
+      }),
+    );
   });
 });
