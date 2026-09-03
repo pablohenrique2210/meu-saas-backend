@@ -45,7 +45,9 @@ describe('UsersService', () => {
     userGamification: { deleteMany: jest.fn() },
     checkIn: { deleteMany: jest.fn() },
     userGameProgress: { deleteMany: jest.fn() },
-    userCourseAccess: { deleteMany: jest.fn() },
+    userCourseAccess: { deleteMany: jest.fn(), createMany: jest.fn() },
+    company: { findUnique: jest.fn() },
+    course: { findMany: jest.fn() },
     $transaction: jest.fn(),
   };
 
@@ -129,6 +131,35 @@ describe('UsersService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
 
     expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('replaces the courses visible to a managed collaborator', async () => {
+    const employee: User = {
+      ...admin,
+      id: 'user_1',
+      email: 'user@example.com',
+      role: Role.USER,
+    };
+    const courseIds = [
+      '3ab60e16-51ca-4a71-95b7-0f6b1e16cc0b',
+      '818aaf2c-3364-45b7-a40c-d98614ad334f',
+    ];
+    prisma.user.findFirst.mockResolvedValue(employee);
+    prisma.course.findMany.mockResolvedValue(courseIds.map((id) => ({ id })));
+    prisma.user.update.mockResolvedValue(employee);
+    await service.update(admin, employee.id, { courseIds });
+
+    expect(prisma.userCourseAccess.deleteMany).toHaveBeenCalledWith({
+      where: { userId: employee.id, courseId: { notIn: courseIds } },
+    });
+    expect(prisma.userCourseAccess.createMany).toHaveBeenCalledWith({
+      data: courseIds.map((courseId) => ({
+        userId: employee.id,
+        courseId,
+        grantedByUserId: admin.id,
+      })),
+      skipDuplicates: true,
+    });
   });
 
   it('does not allow an HR manager to update an admin', async () => {

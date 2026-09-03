@@ -178,6 +178,7 @@ model Module {
   description String?
   order       Int             @default(0)
   isPublished Boolean         @default(false)
+  availableAt DateTime?
   gameType    ModuleGameType?
   gameConfig  Json?
 

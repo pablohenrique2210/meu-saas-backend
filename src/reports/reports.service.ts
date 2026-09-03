@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { minimumRequiredWatchSeconds } from '../modules/content/watch-time';
 import type {
   CollaboratorReport,
   CourseProgressReport,
@@ -238,6 +239,8 @@ export class ReportsService {
       const lesson = lessonById.get(lessonId);
       return Boolean(
         progress?.isCompleted &&
+        (lesson?.type !== 'VIDEO' ||
+          progress.watchedSeconds >= minimumRequiredWatchSeconds(lesson)) &&
         (!hasLessonQuiz(lesson?.quizConfig) ||
           quizResultByUserAndLesson.has(`${userId}:${lessonId}`)),
       );

@@ -4,11 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { LessonType, Role } from '@prisma/client';
 import type { Prisma, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ListGameResultsDto } from './dto/list-game-results.dto';
 import { SubmitGameResultDto } from './dto/submit-game-result.dto';
+import { minimumRequiredWatchSeconds } from '../modules/content/watch-time';
 
 const resultInclude = {
   employee: {
@@ -60,15 +61,25 @@ export class GameResultsService {
       },
       select: {
         id: true,
+        availableAt: true,
         gameType: true,
         gameConfig: true,
-        lessons: { select: { id: true } },
+        lessons: {
+          select: {
+            id: true,
+            type: true,
+            duration: true,
+            minimumWatchSeconds: true,
+          },
+        },
       },
     });
 
     if (!courseModule) {
       throw new NotFoundException('Módulo não encontrado ou sem acesso.');
     }
+
+    this.assertModuleAvailable(user, courseModule.availableAt);
 
     if (!courseModule.gameType || !courseModule.gameConfig) {
       throw new NotFoundException(
@@ -123,9 +134,17 @@ export class GameResultsService {
       select: {
         id: true,
         title: true,
+        availableAt: true,
         gameType: true,
         gameConfig: true,
-        lessons: { select: { id: true } },
+        lessons: {
+          select: {
+            id: true,
+            type: true,
+            duration: true,
+            minimumWatchSeconds: true,
+          },
+        },
         course: { select: { id: true, title: true } },
       },
     });
@@ -135,6 +154,8 @@ export class GameResultsService {
         'Nenhuma avaliação foi configurada para este módulo.',
       );
     }
+
+    this.assertModuleAvailable(user, courseModule.availableAt);
 
     if (user.role === Role.USER) {
       await this.assertModuleLessonsCompleted(user, courseModule.lessons);
@@ -188,19 +209,37 @@ export class GameResultsService {
 
   private async assertModuleLessonsCompleted(
     user: User,
-    lessons: Array<{ id: string }>,
+    lessons: Array<{
+      id: string;
+      type: LessonType;
+      duration: number;
+      minimumWatchSeconds: number;
+    }>,
   ) {
     const lessonIds = lessons.map((lesson) => lesson.id);
-    const completedLessonCount =
+    const completedLessons =
       lessonIds.length === 0
-        ? 0
-        : await this.prisma.lessonProgress.count({
+        ? []
+        : await this.prisma.lessonProgress.findMany({
             where: {
               userId: user.id,
               lessonId: { in: lessonIds },
               isCompleted: true,
             },
+            select: {
+              lessonId: true,
+              watchedSeconds: true,
+            },
           });
+    const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+    const completedLessonCount = completedLessons.filter((progress) => {
+      const lesson = lessonById.get(progress.lessonId);
+      if (!lesson) return false;
+      return (
+        lesson.type !== LessonType.VIDEO ||
+        progress.watchedSeconds >= minimumRequiredWatchSeconds(lesson)
+      );
+    }).length;
 
     if (completedLessonCount !== lessonIds.length) {
       throw new ForbiddenException(
@@ -209,8 +248,24 @@ export class GameResultsService {
     }
   }
 
+  private assertModuleAvailable(user: User, availableAt: Date | null) {
+    if (
+      user.role === Role.USER &&
+      availableAt &&
+      availableAt.getTime() > Date.now()
+    ) {
+      throw new ForbiddenException({
+        code: 'MODULE_NOT_AVAILABLE_YET',
+        message: 'Este módulo ainda não está disponível.',
+        availableAt: availableAt.toISOString(),
+      });
+    }
+  }
+
   private toDiagnosticResult(
-    result: Prisma.ModuleGameResultGetPayload<{ include: typeof resultInclude }>,
+    result: Prisma.ModuleGameResultGetPayload<{
+      include: typeof resultInclude;
+    }>,
   ) {
     return {
       id: result.id,

@@ -1,0 +1,2 @@
+-- O armazenamento de objetos reutiliza os campos contentUrl e Attachment.url.
+-- Nenhuma alteração estrutural de banco é necessária nesta migração.

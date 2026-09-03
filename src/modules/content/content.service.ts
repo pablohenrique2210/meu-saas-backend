@@ -20,6 +20,7 @@ import {
   BunnyStreamService,
   parseBunnyReference,
 } from './bunny-stream.service';
+import { minimumRequiredWatchSeconds } from './watch-time';
 
 type AccessibleLesson = {
   id: string;
@@ -29,11 +30,18 @@ type AccessibleLesson = {
   minimumWatchSeconds: number;
   quizConfig: Prisma.JsonValue | null;
   module: {
+    availableAt: Date | null;
     course: {
       modules: Array<{
         id: string;
         gameType: ModuleGameTypeValue | null;
-        lessons: Array<{ id: string; quizConfig: Prisma.JsonValue | null }>;
+        lessons: Array<{
+          id: string;
+          type: LessonType;
+          duration: number;
+          minimumWatchSeconds: number;
+          quizConfig: Prisma.JsonValue | null;
+        }>;
       }>;
     };
   };
@@ -98,10 +106,10 @@ export class ContentService {
             const predictedWatchedSeconds =
               (existingProgress?.watchedSeconds ?? 0) + watchedIncrement;
             const shouldComplete =
-              (existingProgress?.isCompleted === true && quizCompleted) ||
-              (isCompleted === true &&
-                predictedWatchedSeconds >= requiredSeconds &&
-                quizCompleted);
+              (existingProgress?.isCompleted === true ||
+                isCompleted === true) &&
+              predictedWatchedSeconds >= requiredSeconds &&
+              quizCompleted;
             const progress = await transaction.lessonProgress.upsert({
               where: { userId_lessonId: { userId: user.id, lessonId } },
               update: {
@@ -444,6 +452,7 @@ export class ContentService {
           create: modules?.map((mod, modIndex) => ({
             title: mod.title || `Módulo ${modIndex + 1}`,
             order: modIndex,
+            availableAt: this.availableAtFor(mod.availableAt),
             ...this.moduleGameDataFor(mod),
             lessons: {
               create: mod.lessons?.map((lesson, lessonIndex) => ({
@@ -502,21 +511,27 @@ export class ContentService {
     const progressRows = await this.prisma.lessonProgress.findMany({
       where: { userId: user.id },
     });
-    if (user.role !== Role.USER) return progressRows;
+    const quizRequirementsApply = user.role === Role.USER;
 
     const lessons = await this.prisma.lesson.findMany({
       where: { id: { in: progressRows.map(({ lessonId }) => lessonId) } },
-      select: { id: true, quizConfig: true },
+      select: {
+        id: true,
+        type: true,
+        duration: true,
+        minimumWatchSeconds: true,
+        quizConfig: true,
+      },
     });
-    const quizConfigByLessonId = new Map(
-      lessons.map((lesson) => [lesson.id, lesson.quizConfig]),
-    );
+    const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
 
-    const quizLessonIds = progressRows
-      .filter(({ lessonId }) =>
-        this.hasLessonQuiz(quizConfigByLessonId.get(lessonId) ?? null),
-      )
-      .map(({ lessonId }) => lessonId);
+    const quizLessonIds = quizRequirementsApply
+      ? progressRows
+          .filter(({ lessonId }) =>
+            this.hasLessonQuiz(lessonById.get(lessonId)?.quizConfig ?? null),
+          )
+          .map(({ lessonId }) => lessonId)
+      : [];
     const quizResults =
       quizLessonIds.length > 0
         ? await this.prisma.lessonQuizResult.findMany({
@@ -535,9 +550,18 @@ export class ContentService {
       ...progress,
       isCompleted:
         progress.isCompleted &&
-        (!this.hasLessonQuiz(
-          quizConfigByLessonId.get(progress.lessonId) ?? null,
-        ) ||
+        progress.watchedSeconds >=
+          (lessonById.get(progress.lessonId)?.type === LessonType.VIDEO
+            ? minimumRequiredWatchSeconds(
+                lessonById.get(progress.lessonId) ?? {
+                  type: LessonType.VIDEO,
+                },
+              )
+            : 0) &&
+        (!quizRequirementsApply ||
+          !this.hasLessonQuiz(
+            lessonById.get(progress.lessonId)?.quizConfig ?? null,
+          ) ||
           completedQuizLessonIds.has(progress.lessonId)),
     }));
   }
@@ -571,7 +595,24 @@ export class ContentService {
       throw new NotFoundException('Curso não encontrado ou sem acesso.');
     }
 
-    return course;
+    if (user.role !== Role.USER) return course;
+
+    return {
+      ...course,
+      modules: course.modules.map((courseModule) => {
+        const unavailable =
+          courseModule.availableAt && courseModule.availableAt > new Date();
+        if (!unavailable) return courseModule;
+        return {
+          ...courseModule,
+          lessons: courseModule.lessons.map((lesson) => ({
+            ...lesson,
+            contentUrl: '',
+            attachments: [],
+          })),
+        };
+      }),
+    };
   }
 
   async getDownloadableMaterial(user: User, requestedFilename: string) {
@@ -599,6 +640,10 @@ export class ContentService {
           : {
               module: {
                 course: { userAccesses: { some: { userId: user.id } } },
+                OR: [
+                  { availableAt: null },
+                  { availableAt: { lte: new Date() } },
+                ],
               },
             }),
       },
@@ -673,6 +718,7 @@ export class ContentService {
                   create: {
                     title: mod.title,
                     order: modIndex,
+                    availableAt: this.availableAtFor(mod.availableAt),
                     ...this.moduleGameDataFor(mod),
                     lessons: {
                       create: mod.lessons?.map(
@@ -701,6 +747,7 @@ export class ContentService {
                   update: {
                     title: mod.title,
                     order: modIndex,
+                    availableAt: this.availableAtFor(mod.availableAt),
                     ...this.moduleGameDataFor(mod),
                     lessons: {
                       deleteMany: { id: { notIn: incomingLessonIds } }, // Apaga aulas que o admin removeu
@@ -820,6 +867,7 @@ export class ContentService {
         quizConfig: true,
         module: {
           select: {
+            availableAt: true,
             course: {
               select: {
                 modules: {
@@ -829,7 +877,13 @@ export class ContentService {
                     gameType: true,
                     lessons: {
                       orderBy: { order: 'asc' },
-                      select: { id: true, quizConfig: true },
+                      select: {
+                        id: true,
+                        type: true,
+                        duration: true,
+                        minimumWatchSeconds: true,
+                        quizConfig: true,
+                      },
                     },
                   },
                 },
@@ -842,6 +896,18 @@ export class ContentService {
 
     if (!lesson) {
       throw new NotFoundException('Aula não encontrada ou sem acesso.');
+    }
+
+    if (
+      user.role === Role.USER &&
+      lesson.module.availableAt &&
+      lesson.module.availableAt.getTime() > Date.now()
+    ) {
+      throw new ForbiddenException({
+        code: 'MODULE_NOT_AVAILABLE_YET',
+        message: 'Este módulo ainda não está disponível.',
+        availableAt: lesson.module.availableAt.toISOString(),
+      });
     }
 
     return lesson;
@@ -871,7 +937,7 @@ export class ContentService {
             lessonId: previousLesson.id,
           },
         },
-        select: { isCompleted: true },
+        select: { isCompleted: true, watchedSeconds: true },
       }),
       this.hasLessonQuiz(previousLesson.quizConfig)
         ? this.prisma.lessonQuizResult.findUnique({
@@ -888,6 +954,10 @@ export class ContentService {
 
     if (
       !previousProgress?.isCompleted ||
+      previousProgress.watchedSeconds <
+        (previousLesson.type === LessonType.VIDEO
+          ? minimumRequiredWatchSeconds(previousLesson)
+          : 0) ||
       (this.hasLessonQuiz(previousLesson.quizConfig) && !previousQuizResult)
     ) {
       throw new ForbiddenException({
@@ -925,11 +995,15 @@ export class ContentService {
   }
 
   private requiredWatchSeconds(
-    user: User,
-    lesson: { type: LessonType; minimumWatchSeconds: number },
+    _user: User,
+    lesson: {
+      type: LessonType;
+      duration?: number | null;
+      minimumWatchSeconds: number;
+    },
   ) {
-    if (user.role !== Role.USER || lesson.type !== LessonType.VIDEO) return 0;
-    return Math.max(0, lesson.minimumWatchSeconds);
+    if (lesson.type !== LessonType.VIDEO) return 0;
+    return minimumRequiredWatchSeconds(lesson);
   }
 
   private calculateWatchedIncrement(
@@ -984,7 +1058,9 @@ export class ContentService {
       Math.ceil(minimumWatchSeconds - watchedSeconds),
     );
     const isCompleted =
-      progress?.isCompleted === true && (!quizRequired || quizCompleted);
+      progress?.isCompleted === true &&
+      watchedSeconds >= minimumWatchSeconds &&
+      (!quizRequired || quizCompleted);
 
     return {
       ...(progress ?? {
@@ -1216,5 +1292,14 @@ export class ContentService {
       gameType: courseModule.gameType as ModuleGameTypeValue,
       gameConfig: courseModule.gameConfig as Prisma.InputJsonValue,
     };
+  }
+
+  private availableAtFor(value: unknown) {
+    if (value === null || value === undefined || value === '') return null;
+    const availableAt = new Date(String(value));
+    if (Number.isNaN(availableAt.getTime())) {
+      throw new BadRequestException('Data de liberação do módulo inválida.');
+    }
+    return availableAt;
   }
 }

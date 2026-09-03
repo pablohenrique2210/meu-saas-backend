@@ -34,6 +34,19 @@ const userProfileSelect = {
       name: true,
     },
   },
+  courseAccesses: {
+    orderBy: { course: { title: 'asc' } },
+    select: {
+      course: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          isPublished: true,
+        },
+      },
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 @Injectable()
@@ -123,10 +136,60 @@ export class UsersService {
       );
     }
 
-    return this.prisma.user.update({
-      where: { id },
-      data: dto,
-      select: userProfileSelect,
+    const { companyId: requestedCompanyId, courseIds, ...profileData } = dto;
+    const companyId = requestedCompanyId
+      ? resolveManagedCompanyId(manager, requestedCompanyId)
+      : target.companyId;
+
+    const uniqueCourseIds =
+      courseIds === undefined ? undefined : [...new Set(courseIds)];
+    const [company, courses] = await Promise.all([
+      companyId === target.companyId
+        ? Promise.resolve({ id: companyId })
+        : this.prisma.company.findUnique({
+            where: { id: companyId },
+            select: { id: true },
+          }),
+      uniqueCourseIds === undefined
+        ? Promise.resolve(undefined)
+        : this.prisma.course.findMany({
+            where: { id: { in: uniqueCourseIds } },
+            select: { id: true },
+          }),
+    ]);
+
+    if (!company) throw new NotFoundException('Empresa não encontrada.');
+    if (courses && courses.length !== uniqueCourseIds?.length) {
+      throw new NotFoundException('Um dos cursos selecionados não existe.');
+    }
+
+    return this.prisma.$transaction(async (transaction) => {
+      if (uniqueCourseIds !== undefined) {
+        await transaction.userCourseAccess.deleteMany({
+          where: {
+            userId: id,
+            ...(uniqueCourseIds.length > 0
+              ? { courseId: { notIn: uniqueCourseIds } }
+              : {}),
+          },
+        });
+        if (uniqueCourseIds.length > 0) {
+          await transaction.userCourseAccess.createMany({
+            data: uniqueCourseIds.map((courseId) => ({
+              userId: id,
+              courseId,
+              grantedByUserId: manager.id,
+            })),
+            skipDuplicates: true,
+          });
+        }
+      }
+
+      return transaction.user.update({
+        where: { id },
+        data: { ...profileData, companyId },
+        select: userProfileSelect,
+      });
     });
   }
 

@@ -54,7 +54,7 @@ describe('EmployeeInvitationsService', () => {
       delete: jest.fn(),
     },
     course: { findMany: jest.fn() },
-    userCourseAccess: { createMany: jest.fn() },
+    userCourseAccess: { createMany: jest.fn(), deleteMany: jest.fn() },
     $transaction: jest.fn(),
   };
   const transaction = {
@@ -67,7 +67,7 @@ describe('EmployeeInvitationsService', () => {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
-    userCourseAccess: { createMany: jest.fn() },
+    userCourseAccess: { createMany: jest.fn(), deleteMany: jest.fn() },
   };
   const invitations = {
     createInvitation: jest.fn(),
@@ -237,6 +237,9 @@ describe('EmployeeInvitationsService', () => {
     expect(transaction.userCourseAccess.createMany).toHaveBeenCalledWith(
       expect.objectContaining({ skipDuplicates: true }),
     );
+    expect(transaction.userCourseAccess.deleteMany).toHaveBeenCalledWith({
+      where: { userId: 'clerk_user' },
+    });
     expect(transaction.employeeInvite.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({

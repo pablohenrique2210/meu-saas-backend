@@ -21,11 +21,20 @@ const employee: User = {
   isActive: true,
 };
 
+const administrator: User = {
+  ...employee,
+  id: 'user_admin',
+  name: 'Administrator',
+  email: 'admin@example.com',
+  role: Role.ADMIN,
+};
+
 function accessibleLesson(
   overrides: Partial<{
     id: string;
     duration: number;
     minimumWatchSeconds: number;
+    availableAt: Date | null;
     quizConfig: Record<string, unknown> | null;
     orderedLessonIds: string[];
     modules: Array<{
@@ -43,6 +52,7 @@ function accessibleLesson(
     minimumWatchSeconds: overrides.minimumWatchSeconds ?? 0,
     quizConfig: overrides.quizConfig ?? null,
     module: {
+      availableAt: overrides.availableAt ?? null,
       course: {
         modules: overrides.modules
           ? overrides.modules.map((courseModule) => ({
@@ -50,6 +60,9 @@ function accessibleLesson(
               gameType: courseModule.gameType,
               lessons: courseModule.lessonIds.map((lessonId) => ({
                 id: lessonId,
+                type: LessonType.VIDEO,
+                duration: overrides.duration ?? 10,
+                minimumWatchSeconds: 0,
               })),
             }))
           : [
@@ -57,7 +70,15 @@ function accessibleLesson(
                 id: 'module_1',
                 gameType: null,
                 lessons: (overrides.orderedLessonIds ?? [id]).map(
-                  (lessonId) => ({ id: lessonId }),
+                  (lessonId) => ({
+                    id: lessonId,
+                    type: LessonType.VIDEO,
+                    duration: overrides.duration ?? 10,
+                    minimumWatchSeconds:
+                      lessonId === id
+                        ? (overrides.minimumWatchSeconds ?? 0)
+                        : 0,
+                  }),
                 ),
               },
             ],
@@ -70,8 +91,12 @@ describe('ContentService access control', () => {
   const prisma = {
     $transaction: jest.fn(),
     course: { create: jest.fn(), findMany: jest.fn() },
-    lesson: { findFirst: jest.fn() },
-    lessonProgress: { findUnique: jest.fn(), upsert: jest.fn() },
+    lesson: { findFirst: jest.fn(), findMany: jest.fn() },
+    lessonProgress: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+    },
     lessonQuizResult: { findUnique: jest.fn(), upsert: jest.fn() },
     moduleGameResult: { findUnique: jest.fn() },
   };
@@ -132,6 +157,18 @@ describe('ContentService access control', () => {
     expect(prisma.lessonProgress.upsert).not.toHaveBeenCalled();
   });
 
+  it('blocks a collaborator from opening a module before its scheduled release', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({ availableAt: new Date(Date.now() + 60_000) }),
+    );
+
+    await expect(
+      service.getProgress(employee, 'lesson_1'),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'MODULE_NOT_AVAILABLE_YET' }),
+    });
+  });
+
   it('does not complete a video before the minimum watch time', async () => {
     prisma.lesson.findFirst.mockResolvedValue(
       accessibleLesson({ minimumWatchSeconds: 60 }),
@@ -158,6 +195,90 @@ describe('ContentService access control', () => {
     await expect(
       service.updateProgress(employee, 'lesson_1', 25, true),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('also enforces the minimum watch time in administrator course playback', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({ minimumWatchSeconds: 60 }),
+    );
+    prisma.lessonProgress.findUnique.mockResolvedValue({
+      id: 'progress_admin',
+      userId: administrator.id,
+      lessonId: 'lesson_1',
+      lastTime: 0,
+      watchedSeconds: 0,
+      isCompleted: true,
+      updatedAt: new Date(),
+    });
+
+    const progress = await service.getProgress(administrator, 'lesson_1');
+
+    expect(progress).toEqual(
+      expect.objectContaining({
+        isCompleted: false,
+        minimumWatchSeconds: 60,
+        remainingSeconds: 60,
+        canComplete: false,
+      }),
+    );
+  });
+
+  it('revokes a stale completion when the required watch time increased', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({ minimumWatchSeconds: 60 }),
+    );
+    prisma.lessonProgress.findUnique.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 10,
+      watchedSeconds: 10,
+      isCompleted: true,
+      updatedAt: new Date(),
+    });
+    prisma.lessonProgress.upsert.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 10,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+
+    const progress = await service.updateProgress(employee, 'lesson_1', 10);
+    expect(
+      prisma.lessonProgress.upsert.mock.calls[0][0].update.isCompleted,
+    ).toBe(false);
+    expect(progress).toEqual(
+      expect.objectContaining({ isCompleted: false, remainingSeconds: 50 }),
+    );
+  });
+
+  it('does not report a stale course completion below the current minimum', async () => {
+    prisma.lessonProgress.findMany.mockResolvedValue([
+      {
+        id: 'progress_1',
+        userId: employee.id,
+        lessonId: 'lesson_1',
+        lastTime: 10,
+        watchedSeconds: 10,
+        isCompleted: true,
+        updatedAt: new Date(),
+      },
+    ]);
+    prisma.lesson.findMany.mockResolvedValue([
+      {
+        id: 'lesson_1',
+        type: LessonType.VIDEO,
+        minimumWatchSeconds: 60,
+        quizConfig: null,
+      },
+    ]);
+
+    await expect(service.getUserProgressAll(employee)).resolves.toEqual([
+      expect.objectContaining({ lessonId: 'lesson_1', isCompleted: false }),
+    ]);
   });
 
   it('does not count a large seek as watched time', async () => {
@@ -301,6 +422,7 @@ describe('ContentService access control', () => {
   it('does not expose correct answers or feedback when loading a lesson quiz', async () => {
     prisma.lesson.findFirst.mockResolvedValue(
       accessibleLesson({
+        duration: 0,
         quizConfig: {
           title: 'Quiz',
           questions: [
@@ -336,6 +458,7 @@ describe('ContentService access control', () => {
   it('grades all selected options in a multiple-answer lesson quiz', async () => {
     prisma.lesson.findFirst.mockResolvedValue(
       accessibleLesson({
+        duration: 0,
         quizConfig: {
           title: 'Quiz',
           questions: [

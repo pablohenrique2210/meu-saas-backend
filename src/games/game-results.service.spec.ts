@@ -59,7 +59,7 @@ function persistedResult() {
 describe('GameResultsService', () => {
   const prisma = {
     module: { findFirst: jest.fn() },
-    lessonProgress: { count: jest.fn() },
+    lessonProgress: { findMany: jest.fn() },
     moduleGameResult: {
       upsert: jest.fn(),
       findMany: jest.fn(),
@@ -75,10 +75,22 @@ describe('GameResultsService', () => {
       title: 'Comunicação',
       gameType: ModuleGameType.CORRIDA,
       gameConfig: { questions: [] },
-      lessons: [{ id: 'lesson_1' }, { id: 'lesson_2' }],
+      lessons: [
+        { id: 'lesson_1', type: 'VIDEO', minimumWatchSeconds: 60 },
+        { id: 'lesson_2', type: 'TEXT', minimumWatchSeconds: 0 },
+      ],
       course: { id: 'course_1', title: 'Líder em Ação' },
     });
-    prisma.lessonProgress.count.mockResolvedValue(2);
+    prisma.lessonProgress.findMany.mockResolvedValue([
+      {
+        lessonId: 'lesson_1',
+        watchedSeconds: 60,
+      },
+      {
+        lessonId: 'lesson_2',
+        watchedSeconds: 0,
+      },
+    ]);
     prisma.moduleGameResult.upsert.mockResolvedValue(persistedResult());
     service = new GameResultsService(prisma as unknown as PrismaService);
   });
@@ -115,7 +127,16 @@ describe('GameResultsService', () => {
   });
 
   it('rejects a result while the module still has incomplete lessons', async () => {
-    prisma.lessonProgress.count.mockResolvedValue(1);
+    prisma.lessonProgress.findMany.mockResolvedValue([
+      {
+        lessonId: 'lesson_1',
+        watchedSeconds: 59,
+      },
+      {
+        lessonId: 'lesson_2',
+        watchedSeconds: 0,
+      },
+    ]);
 
     await expect(service.submit(employee, dto)).rejects.toBeInstanceOf(
       ForbiddenException,

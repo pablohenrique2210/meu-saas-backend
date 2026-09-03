@@ -342,6 +342,12 @@ export class EmployeeInvitationsService {
             },
           });
 
+      // O convite é a fonte de verdade para a primeira liberação. Isso também
+      // repara contas que chegaram a autenticar antes da confirmação do CPF,
+      // removendo acessos antigos que não pertencem ao convite aprovado.
+      await transaction.userCourseAccess.deleteMany({
+        where: { userId: user.id },
+      });
       if (invite.courseAccesses.length > 0) {
         await transaction.userCourseAccess.createMany({
           data: invite.courseAccesses.map(({ courseId }) => ({
