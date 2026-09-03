@@ -169,6 +169,16 @@ describe('ContentService access control', () => {
     });
   });
 
+  it('allows an administrator to open a module before its scheduled release', async () => {
+    prisma.lesson.findFirst.mockResolvedValue(
+      accessibleLesson({ availableAt: new Date(Date.now() + 60_000) }),
+    );
+
+    await expect(
+      service.getProgress(administrator, 'lesson_1'),
+    ).resolves.toMatchObject({ lastTime: 0, isCompleted: false });
+  });
+
   it('does not complete a video before the minimum watch time', async () => {
     prisma.lesson.findFirst.mockResolvedValue(
       accessibleLesson({ minimumWatchSeconds: 60 }),
