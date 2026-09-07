@@ -5,10 +5,9 @@ import {
   InternalServerErrorException,
   Logger,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { createClerkClient } from '@clerk/backend';
-import { Role } from '@prisma/client';
+import { InviteNotificationChannel, Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { assertValidCpf, cpfHashesMatch, hashCpf } from './cpf';
@@ -18,6 +17,7 @@ import {
   isPlatformAdministrator,
   resolveManagedCompanyId,
 } from '../auth/company-scope';
+import { InviteNotificationProcessor } from './invite-notification.processor';
 
 const inviteViewSelect = {
   id: true,
@@ -45,7 +45,10 @@ const inviteViewSelect = {
 export class EmployeeInvitationsService {
   private readonly logger = new Logger(EmployeeInvitationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationProcessor: InviteNotificationProcessor,
+  ) {}
 
   async listPrograms() {
     return this.prisma.course.findMany({
@@ -133,28 +136,22 @@ export class EmployeeInvitationsService {
         courseAccesses: {
           create: courseIds.map((courseId) => ({ courseId })),
         },
+        notificationJobs: {
+          create: [
+            { channel: InviteNotificationChannel.EMAIL },
+            ...(dto.phone?.trim() &&
+            process.env.WHATSAPP_API_URL?.trim() &&
+            process.env.WHATSAPP_API_TOKEN?.trim()
+              ? [{ channel: InviteNotificationChannel.WHATSAPP }]
+              : []),
+          ],
+        },
       },
       select: inviteViewSelect,
     });
 
-    try {
-      const clerkInvitation = await this.createClerkInvitation(
-        invite.id,
-        email,
-      );
-      const savedInvite = await this.prisma.employeeInvite.update({
-        where: { id: invite.id },
-        data: { clerkInvitationId: clerkInvitation.id },
-        select: inviteViewSelect,
-      });
-      return this.toView(savedInvite);
-    } catch (error) {
-      await this.prisma.employeeInvite.delete({ where: { id: invite.id } });
-      throw new ServiceUnavailableException(
-        'Não foi possível enviar o convite agora. Tente novamente em instantes.',
-        { cause: error },
-      );
-    }
+    void this.notificationProcessor.wake();
+    return this.toView(invite);
   }
 
   async revoke(manager: User, inviteId: string) {
@@ -179,6 +176,14 @@ export class EmployeeInvitationsService {
       where: { id: invite.id },
       data: { status: 'REVOKED' },
       select: inviteViewSelect,
+    });
+    await this.prisma.inviteNotificationJob.updateMany({
+      where: { inviteId: invite.id, status: { in: ['PENDING', 'PROCESSING'] } },
+      data: {
+        status: 'FAILED',
+        lockedAt: null,
+        lastError: 'Convite revogado.',
+      },
     });
 
     if (invite.clerkInvitationId) {
@@ -367,6 +372,17 @@ export class EmployeeInvitationsService {
           claimedAt: new Date(),
         },
       });
+      await transaction.inviteNotificationJob.updateMany({
+        where: {
+          inviteId: invite.id,
+          status: { in: ['PENDING', 'PROCESSING'] },
+        },
+        data: {
+          status: 'FAILED',
+          lockedAt: null,
+          lastError: 'Convite utilizado.',
+        },
+      });
 
       return {
         id: user.id,
@@ -380,21 +396,6 @@ export class EmployeeInvitationsService {
         hireDate: user.hireDate,
         isActive: user.isActive,
       };
-    });
-  }
-
-  private async createClerkInvitation(inviteId: string, emailAddress: string) {
-    const frontendUrl = (
-      process.env.FRONTEND_URL ?? 'http://localhost:3000'
-    ).replace(/\/$/, '');
-
-    return this.getClerkClient().invitations.createInvitation({
-      emailAddress,
-      redirectUrl: `${frontendUrl}/ativar-acesso`,
-      expiresInDays: 30,
-      ignoreExisting: true,
-      notify: true,
-      publicMetadata: { employeeInviteId: inviteId },
     });
   }
 

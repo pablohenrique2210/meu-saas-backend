@@ -48,6 +48,18 @@ enum EmployeeInviteStatus {
   EXPIRED
 }
 
+enum InviteNotificationChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum InviteNotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
 // --- ESTRUTURA MULTI-TENANT ---
 model Company {
   id              String           @id @default(uuid())
@@ -103,15 +115,15 @@ model User {
 
 // --- ENGINE DE CONTEÚDO (A JÓIA DA COROA) ---
 model Course {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   title       String
   description String?
   category    String
   author      String? // 👈 NOVO: Autor do curso
   coverUrl    String? // 👈 NOVO: URL da Capa do curso
-  isPublished Boolean  @default(false)
+  isPublished Boolean   @default(false)
   availableAt DateTime?
-  createdAt   DateTime @default(now())
+  createdAt   DateTime  @default(now())
 
   modules        Module[]
   tracks         TrackCourse[]
@@ -142,11 +154,32 @@ model EmployeeInvite {
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
-  company        Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  courseAccesses EmployeeInviteCourse[]
+  company          Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  courseAccesses   EmployeeInviteCourse[]
+  notificationJobs InviteNotificationJob[]
 
   @@index([companyId, status])
   @@index([email, status])
+}
+
+model InviteNotificationJob {
+  id                String                    @id @default(uuid())
+  inviteId          String
+  channel           InviteNotificationChannel
+  status            InviteNotificationStatus  @default(PENDING)
+  attempts          Int                       @default(0)
+  nextAttemptAt     DateTime                  @default(now())
+  lockedAt          DateTime?
+  sentAt            DateTime?
+  providerMessageId String?
+  lastError         String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  invite EmployeeInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+
+  @@unique([inviteId, channel])
+  @@index([status, nextAttemptAt])
 }
 
 model EmployeeInviteCourse {

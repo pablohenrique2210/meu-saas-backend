@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { EmployeeInvitationsController } from './employee-invitations.controller';
 import { EmployeeInvitationsService } from './employee-invitations.service';
 import { RhAccessGuard } from '../auth/rh-access.guard';
+import { InviteNotificationProcessor } from './invite-notification.processor';
 
 @Module({
   // Rotas estáticas como /invitations e /programs precisam ser registradas
@@ -16,6 +17,7 @@ import { RhAccessGuard } from '../auth/rh-access.guard';
   providers: [
     UsersService,
     EmployeeInvitationsService,
+    InviteNotificationProcessor,
     PrismaService,
     ClerkAuthGuard,
     DatabaseUserGuard,

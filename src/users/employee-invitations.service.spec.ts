@@ -5,6 +5,7 @@ import type { User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmployeeInvitationsService } from './employee-invitations.service';
 import { hashCpf } from './cpf';
+import { InviteNotificationProcessor } from './invite-notification.processor';
 
 jest.mock('@clerk/backend', () => ({ createClerkClient: jest.fn() }));
 
@@ -54,6 +55,7 @@ describe('EmployeeInvitationsService', () => {
       delete: jest.fn(),
     },
     course: { findMany: jest.fn() },
+    inviteNotificationJob: { updateMany: jest.fn() },
     userCourseAccess: { createMany: jest.fn(), deleteMany: jest.fn() },
     $transaction: jest.fn(),
   };
@@ -67,6 +69,7 @@ describe('EmployeeInvitationsService', () => {
       findFirst: jest.fn(),
       update: jest.fn(),
     },
+    inviteNotificationJob: { updateMany: jest.fn() },
     userCourseAccess: { createMany: jest.fn(), deleteMany: jest.fn() },
   };
   const invitations = {
@@ -75,9 +78,14 @@ describe('EmployeeInvitationsService', () => {
   };
   const clerkUsers = { getUser: jest.fn() };
   let service: EmployeeInvitationsService;
+  const notificationProcessor = {
+    wake: jest.fn().mockResolvedValue(undefined),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.WHATSAPP_API_URL;
+    delete process.env.WHATSAPP_API_TOKEN;
     process.env.CLERK_SECRET_KEY = 'sk_test_unit';
     process.env.CPF_HASH_SECRET = 'cpf_hash_unit_secret';
     jest.mocked(createClerkClient).mockReturnValue({
@@ -98,6 +106,7 @@ describe('EmployeeInvitationsService', () => {
     );
     service = new EmployeeInvitationsService(
       prisma as unknown as PrismaService,
+      notificationProcessor as unknown as InviteNotificationProcessor,
     );
   });
 
@@ -119,10 +128,32 @@ describe('EmployeeInvitationsService', () => {
       }),
     );
     expect(createCall.data).not.toHaveProperty('cpf');
-    expect(invitations.createInvitation).toHaveBeenCalledWith(
+    expect(createCall.data.notificationJobs).toEqual({
+      create: [{ channel: 'EMAIL' }],
+    });
+    expect(notificationProcessor.wake).toHaveBeenCalledTimes(1);
+    expect(invitations.createInvitation).not.toHaveBeenCalled();
+  });
+
+  it('queues WhatsApp independently when a phone number is provided', async () => {
+    process.env.WHATSAPP_API_URL = 'https://whatsapp.example/messages';
+    process.env.WHATSAPP_API_TOKEN = 'whatsapp_test_token';
+
+    await service.create(admin, {
+      name: 'Maria Silva',
+      email: 'maria@example.com',
+      cpf: '529.982.247-25',
+      phone: '(11) 99999-1234',
+      courseIds: [course.id],
+    });
+
+    expect(prisma.employeeInvite.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        emailAddress: 'maria@example.com',
-        redirectUrl: 'http://localhost:3000/ativar-acesso',
+        data: expect.objectContaining({
+          notificationJobs: {
+            create: [{ channel: 'EMAIL' }, { channel: 'WHATSAPP' }],
+          },
+        }),
       }),
     );
   });
