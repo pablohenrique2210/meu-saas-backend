@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
 } from '@nestjs/common';
+import { Role } from '@prisma/client';
 import { AuthenticatedUserRequest } from './current-user.decorator';
 import { getRhAllowedEmails, hasRhEmailAccess } from './rh-access';
 
@@ -16,6 +17,8 @@ export class RhAccessGuard implements CanActivate {
     const request = context
       .switchToHttp()
       .getRequest<AuthenticatedUserRequest>();
+
+    if (request.currentUser?.role === Role.ADMIN) return true;
 
     if (getRhAllowedEmails().length === 0) {
       this.logger.error(

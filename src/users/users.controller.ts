@@ -42,8 +42,8 @@ export class UsersController {
   getMyRhAccess(@CurrentUser() user: User) {
     return {
       allowed:
-        hasRhEmailAccess(user) &&
-        (user.role === Role.ADMIN || user.role === Role.HR_MANAGER),
+        user.role === Role.ADMIN ||
+        (user.role === Role.HR_MANAGER && hasRhEmailAccess(user)),
     };
   }
 

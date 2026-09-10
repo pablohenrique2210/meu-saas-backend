@@ -33,22 +33,32 @@ describe('RhAccessGuard', () => {
     process.env.RH_ALLOWED_EMAILS =
       ' CONSULTORA@example.com, pablo@EXAMPLE.com ';
 
+    expect(
+      new RhAccessGuard().canActivate(
+        contextFor({ ...user, role: Role.HR_MANAGER }),
+      ),
+    ).toBe(true);
+  });
+
+  it('accepts administrators even when they are outside the allowlist', () => {
+    process.env.RH_ALLOWED_EMAILS = 'consultora@example.com';
+
     expect(new RhAccessGuard().canActivate(contextFor(user))).toBe(true);
   });
 
-  it('rejects users outside the allowlist', () => {
-    process.env.RH_ALLOWED_EMAILS = 'consultora@example.com';
-
-    expect(() => new RhAccessGuard().canActivate(contextFor(user))).toThrow(
-      ForbiddenException,
-    );
-  });
-
-  it('fails closed when the variable is missing', () => {
+  it('accepts administrators when the allowlist variable is missing', () => {
     delete process.env.RH_ALLOWED_EMAILS;
 
-    expect(() => new RhAccessGuard().canActivate(contextFor(user))).toThrow(
-      ForbiddenException,
-    );
+    expect(new RhAccessGuard().canActivate(contextFor(user))).toBe(true);
+  });
+
+  it('rejects an HR manager outside the allowlist', () => {
+    process.env.RH_ALLOWED_EMAILS = 'consultora@example.com';
+
+    expect(() =>
+      new RhAccessGuard().canActivate(
+        contextFor({ ...user, role: Role.HR_MANAGER }),
+      ),
+    ).toThrow(ForbiddenException);
   });
 });

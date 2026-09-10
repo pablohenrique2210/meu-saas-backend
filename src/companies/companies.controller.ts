@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { User } from '@prisma/client';
 import { CompaniesService } from './companies.service';
@@ -22,10 +30,13 @@ export class CompaniesController {
   }
 
   @Post()
-  create(
-    @CurrentUser() manager: User,
-    @Body() dto: CreateCompanyDto,
-  ) {
+  create(@CurrentUser() manager: User, @Body() dto: CreateCompanyDto) {
     return this.companiesService.create(manager, dto);
+  }
+
+  @Delete(':id')
+  @Roles(Role.ADMIN)
+  remove(@CurrentUser() manager: User, @Param('id') id: string) {
+    return this.companiesService.remove(manager, id);
   }
 }

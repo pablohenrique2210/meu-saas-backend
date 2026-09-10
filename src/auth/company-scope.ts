@@ -1,17 +1,9 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { User } from '@prisma/client';
-import { getRhAllowedEmails } from './rh-access';
 
-export function isPlatformAdministrator(
-  user: Pick<User, 'email' | 'role'>,
-) {
-  const platformOwnerEmail = getRhAllowedEmails()[0];
-  return (
-    user.role === Role.ADMIN &&
-    Boolean(platformOwnerEmail) &&
-    user.email.trim().toLowerCase() === platformOwnerEmail
-  );
+export function isPlatformAdministrator(user: Pick<User, 'role'>) {
+  return user.role === Role.ADMIN;
 }
 
 export function resolveManagedCompanyId(

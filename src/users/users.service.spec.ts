@@ -112,7 +112,7 @@ describe('UsersService', () => {
     prisma.user.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.update(admin, 'external_user', { department: 'Finance' }),
+      service.update(hrManager, 'external_user', { department: 'Finance' }),
     ).rejects.toBeInstanceOf(NotFoundException);
 
     expect(prisma.user.findFirst).toHaveBeenCalledWith(
@@ -124,7 +124,7 @@ describe('UsersService', () => {
   });
 
   it('does not allow a manager to deactivate themselves', async () => {
-    prisma.user.findFirst.mockResolvedValue(admin);
+    prisma.user.findUnique.mockResolvedValue(admin);
 
     await expect(
       service.update(admin, admin.id, { isActive: false }),
@@ -144,7 +144,7 @@ describe('UsersService', () => {
       '3ab60e16-51ca-4a71-95b7-0f6b1e16cc0b',
       '818aaf2c-3364-45b7-a40c-d98614ad334f',
     ];
-    prisma.user.findFirst.mockResolvedValue(employee);
+    prisma.user.findUnique.mockResolvedValue(employee);
     prisma.course.findMany.mockResolvedValue(courseIds.map((id) => ({ id })));
     prisma.user.update.mockResolvedValue(employee);
     await service.update(admin, employee.id, { courseIds });
@@ -173,7 +173,7 @@ describe('UsersService', () => {
   });
 
   it('does not allow a manager to delete themselves', async () => {
-    prisma.user.findFirst.mockResolvedValue(admin);
+    prisma.user.findUnique.mockResolvedValue(admin);
 
     await expect(service.remove(admin, admin.id)).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -200,7 +200,7 @@ describe('UsersService', () => {
       email: 'user@example.com',
       role: Role.USER,
     };
-    prisma.user.findFirst.mockResolvedValue(employee);
+    prisma.user.findUnique.mockResolvedValue(employee);
     prisma.user.delete.mockResolvedValue(employee);
     clerkUsers.deleteUser.mockResolvedValue(employee);
     process.env.CLERK_SECRET_KEY = 'sk_test_example';
