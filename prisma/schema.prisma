@@ -408,6 +408,7 @@ model LessonProgress {
   lastTime       Float // O segundo exato onde parou (ex: 145.5)
   watchedSeconds Float    @default(0)
   isCompleted    Boolean  @default(false)
+  lastEventType  String   @default("SEEK")
   updatedAt      DateTime @updatedAt
 
   // Garante que só existe um registo por aluno/aula

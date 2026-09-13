@@ -1,0 +1,2 @@
+ALTER TABLE "LessonProgress"
+ADD COLUMN "lastEventType" TEXT NOT NULL DEFAULT 'SEEK';

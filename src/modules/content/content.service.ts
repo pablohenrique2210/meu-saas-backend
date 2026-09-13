@@ -69,7 +69,7 @@ export class ContentService {
     lessonId: string,
     lastTime: number,
     isCompleted?: boolean,
-    eventType: 'PLAYING' | 'SEEK' | 'PAUSE' = 'SEEK',
+    eventType: 'PLAY_START' | 'PLAYING' | 'SEEK' | 'PAUSE' = 'SEEK',
     playbackRate = 1,
   ) {
     const lesson = await this.assertCanAccessLesson(user, lessonId);
@@ -110,6 +110,10 @@ export class ContentService {
               eventType,
               playbackRate,
             );
+            const eventTypeToPersist = this.progressEventToPersist(
+              existingProgress,
+              eventType,
+            );
             const predictedWatchedSeconds =
               (existingProgress?.watchedSeconds ?? 0) + watchedIncrement;
             const shouldComplete =
@@ -123,6 +127,7 @@ export class ContentService {
                 lastTime: safeLastTime,
                 watchedSeconds: { increment: watchedIncrement },
                 isCompleted: shouldComplete,
+                lastEventType: eventTypeToPersist,
               },
               create: {
                 userId: user.id,
@@ -130,6 +135,7 @@ export class ContentService {
                 lastTime: safeLastTime,
                 watchedSeconds: watchedIncrement,
                 isCompleted: shouldComplete,
+                lastEventType: eventTypeToPersist,
               },
             });
             return { progress, quizCompleted };
@@ -1099,20 +1105,22 @@ export class ContentService {
     progress: {
       lastTime: number;
       watchedSeconds: number;
+      lastEventType: string;
       updatedAt: Date;
     } | null,
     currentTime: number,
-    eventType: 'PLAYING' | 'SEEK' | 'PAUSE',
+    eventType: 'PLAY_START' | 'PLAYING' | 'SEEK' | 'PAUSE',
     playbackRate: number,
   ) {
     // A primeira chamada apenas cria a âncora de tempo no servidor. Nenhum
     // tempo informado pelo navegador é aceito retroativamente.
     if (!progress) return 0;
 
-    // Saltos e pausas apenas reposicionam a âncora. Alguns players emitem
-    // PAUSE automaticamente durante o arraste da barra; aceitar esse evento
-    // como reprodução faria cada salto reduzir alguns segundos do requisito.
+    // Somente uma sessão iniciada por PLAY_START pode acumular heartbeats.
+    // Assim, timeupdates emitidos pelo Bunny durante o arraste permanecem
+    // bloqueados depois de SEEK/PAUSE, mesmo se chegarem como PLAYING.
     if (eventType !== 'PLAYING') return 0;
+    if (!['PLAY_START', 'PLAYING'].includes(progress.lastEventType)) return 0;
 
     const videoAdvance = Math.max(0, currentTime - progress.lastTime);
     const elapsedSeconds = Math.max(
@@ -1131,6 +1139,20 @@ export class ContentService {
     // O requisito é medido em tempo real assistido. Em 2x, por exemplo,
     // quatro segundos do vídeo valem apenas dois segundos de permanência.
     return Math.min(videoAdvance / safePlaybackRate, elapsedSeconds, 15);
+  }
+
+  private progressEventToPersist(
+    progress: { lastEventType: string } | null,
+    eventType: 'PLAY_START' | 'PLAYING' | 'SEEK' | 'PAUSE',
+  ) {
+    if (eventType !== 'PLAYING') return eventType;
+    if (
+      progress &&
+      ['PLAY_START', 'PLAYING'].includes(progress.lastEventType)
+    ) {
+      return 'PLAYING';
+    }
+    return progress?.lastEventType ?? 'SEEK';
   }
 
   private isTransactionConflict(error: unknown) {

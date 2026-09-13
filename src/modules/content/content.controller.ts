@@ -59,9 +59,9 @@ export class UpdateProgressDto {
   @IsOptional()
   isCompleted?: boolean;
 
-  @IsIn(['PLAYING', 'SEEK', 'PAUSE'])
+  @IsIn(['PLAY_START', 'PLAYING', 'SEEK', 'PAUSE'])
   @IsOptional()
-  eventType?: 'PLAYING' | 'SEEK' | 'PAUSE';
+  eventType?: 'PLAY_START' | 'PLAYING' | 'SEEK' | 'PAUSE';
 
   @IsNumber()
   @Min(0.25)
