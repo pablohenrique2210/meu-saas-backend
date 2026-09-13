@@ -58,6 +58,16 @@ export class UpdateProgressDto {
   @IsBoolean()
   @IsOptional()
   isCompleted?: boolean;
+
+  @IsIn(['PLAYING', 'SEEK', 'PAUSE'])
+  @IsOptional()
+  eventType?: 'PLAYING' | 'SEEK' | 'PAUSE';
+
+  @IsNumber()
+  @Min(0.25)
+  @Max(2)
+  @IsOptional()
+  playbackRate?: number;
 }
 
 export class UploadChunkDto {
@@ -231,6 +241,8 @@ export class ContentController {
       dto.lessonId,
       dto.lastTime,
       dto.isCompleted,
+      dto.eventType,
+      dto.playbackRate,
     );
   }
 

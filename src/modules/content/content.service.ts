@@ -69,6 +69,8 @@ export class ContentService {
     lessonId: string,
     lastTime: number,
     isCompleted?: boolean,
+    eventType: 'PLAYING' | 'SEEK' | 'PAUSE' = 'SEEK',
+    playbackRate = 1,
   ) {
     const lesson = await this.assertCanAccessLesson(user, lessonId);
     await this.assertLessonIsUnlocked(user, lesson);
@@ -105,6 +107,8 @@ export class ContentService {
             const watchedIncrement = this.calculateWatchedIncrement(
               existingProgress,
               safeLastTime,
+              eventType,
+              playbackRate,
             );
             const predictedWatchedSeconds =
               (existingProgress?.watchedSeconds ?? 0) + watchedIncrement;
@@ -1098,10 +1102,16 @@ export class ContentService {
       updatedAt: Date;
     } | null,
     currentTime: number,
+    eventType: 'PLAYING' | 'SEEK' | 'PAUSE',
+    playbackRate: number,
   ) {
     // A primeira chamada apenas cria a âncora de tempo no servidor. Nenhum
     // tempo informado pelo navegador é aceito retroativamente.
     if (!progress) return 0;
+
+    // Um salto apenas reposiciona a âncora. Heartbeats de reprodução e o
+    // evento final de pausa podem confirmar o trecho contínuo recém-assistido.
+    if (eventType === 'SEEK') return 0;
 
     const videoAdvance = Math.max(0, currentTime - progress.lastTime);
     const elapsedSeconds = Math.max(
@@ -1109,9 +1119,17 @@ export class ContentService {
       (Date.now() - progress.updatedAt.getTime()) / 1000,
     );
 
-    // O relógio do servidor é o limite: repetir chamadas, acelerar ou saltar
-    // o player não pode acumular mais segundos do que o tempo real decorrido.
-    return Math.min(videoAdvance, elapsedSeconds, 15);
+    const safePlaybackRate = Math.min(2, Math.max(0.25, playbackRate));
+    const maximumExpectedAdvance = elapsedSeconds * safePlaybackRate + 1.5;
+
+    // Defesa adicional caso o evento de seek seja perdido no navegador: uma
+    // descontinuidade maior que a reprodução permitiria cria uma nova âncora,
+    // mas não reduz o tempo obrigatório.
+    if (videoAdvance > maximumExpectedAdvance) return 0;
+
+    // O requisito é medido em tempo real assistido. Em 2x, por exemplo,
+    // quatro segundos do vídeo valem apenas dois segundos de permanência.
+    return Math.min(videoAdvance / safePlaybackRate, elapsedSeconds, 15);
   }
 
   private isTransactionConflict(error: unknown) {

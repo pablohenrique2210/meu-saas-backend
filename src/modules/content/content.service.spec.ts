@@ -342,10 +342,74 @@ describe('ContentService access control', () => {
       updatedAt: new Date(),
     });
 
-    await service.updateProgress(employee, 'lesson_1', 500);
+    await service.updateProgress(
+      employee,
+      'lesson_1',
+      500,
+      false,
+      'SEEK',
+    );
 
     const update = prisma.lessonProgress.upsert.mock.calls[0][0].update;
-    expect(update.watchedSeconds.increment).toBeLessThanOrEqual(3.1);
+    expect(update.watchedSeconds.increment).toBe(0);
+  });
+
+  it('does not count a seek after the video was paused', async () => {
+    prisma.lessonProgress.findUnique.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 10,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(Date.now() - 30_000),
+    });
+    prisma.lessonProgress.upsert.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 20,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+
+    await service.updateProgress(employee, 'lesson_1', 20, false, 'SEEK');
+
+    const update = prisma.lessonProgress.upsert.mock.calls[0][0].update;
+    expect(update.watchedSeconds.increment).toBe(0);
+  });
+
+  it('rejects an implausible jump even when reported as playing', async () => {
+    prisma.lessonProgress.findUnique.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 10,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(Date.now() - 1_000),
+    });
+    prisma.lessonProgress.upsert.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 500,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+
+    await service.updateProgress(
+      employee,
+      'lesson_1',
+      500,
+      false,
+      'PLAYING',
+    );
+
+    const update = prisma.lessonProgress.upsert.mock.calls[0][0].update;
+    expect(update.watchedSeconds.increment).toBe(0);
   });
 
   it('does not trust retroactive time on the first progress request', async () => {
@@ -386,7 +450,13 @@ describe('ContentService access control', () => {
       updatedAt: new Date(),
     });
 
-    await service.updateProgress(employee, 'lesson_1', 12);
+    await service.updateProgress(
+      employee,
+      'lesson_1',
+      12,
+      false,
+      'PLAYING',
+    );
 
     const update = prisma.lessonProgress.upsert.mock.calls[0][0].update;
     expect(update.watchedSeconds.increment).toBeLessThan(0.25);
