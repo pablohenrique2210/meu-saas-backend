@@ -380,6 +380,32 @@ describe('ContentService access control', () => {
     expect(update.watchedSeconds.increment).toBe(0);
   });
 
+  it('does not count a pause emitted while dragging the player timeline', async () => {
+    prisma.lessonProgress.findUnique.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 10,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(Date.now() - 5_000),
+    });
+    prisma.lessonProgress.upsert.mockResolvedValue({
+      id: 'progress_1',
+      userId: employee.id,
+      lessonId: 'lesson_1',
+      lastTime: 15,
+      watchedSeconds: 10,
+      isCompleted: false,
+      updatedAt: new Date(),
+    });
+
+    await service.updateProgress(employee, 'lesson_1', 15, false, 'PAUSE');
+
+    const update = prisma.lessonProgress.upsert.mock.calls[0][0].update;
+    expect(update.watchedSeconds.increment).toBe(0);
+  });
+
   it('rejects an implausible jump even when reported as playing', async () => {
     prisma.lessonProgress.findUnique.mockResolvedValue({
       id: 'progress_1',

@@ -1109,9 +1109,10 @@ export class ContentService {
     // tempo informado pelo navegador é aceito retroativamente.
     if (!progress) return 0;
 
-    // Um salto apenas reposiciona a âncora. Heartbeats de reprodução e o
-    // evento final de pausa podem confirmar o trecho contínuo recém-assistido.
-    if (eventType === 'SEEK') return 0;
+    // Saltos e pausas apenas reposicionam a âncora. Alguns players emitem
+    // PAUSE automaticamente durante o arraste da barra; aceitar esse evento
+    // como reprodução faria cada salto reduzir alguns segundos do requisito.
+    if (eventType !== 'PLAYING') return 0;
 
     const videoAdvance = Math.max(0, currentTime - progress.lastTime);
     const elapsedSeconds = Math.max(
