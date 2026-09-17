@@ -26,6 +26,11 @@ const hasLessonQuiz = (config: unknown) =>
     Array.isArray((config as { questions?: unknown }).questions),
   );
 
+const hasStartedLessonProgress = (progress: {
+  watchedSeconds: number;
+  isCompleted: boolean;
+}) => progress.watchedSeconds > 0 || progress.isCompleted;
+
 function statusFor(
   started: boolean,
   completed: number,
@@ -248,6 +253,17 @@ export class ReportsService {
 
     const collaborators: CollaboratorReport[] = accesses.map(({ user }) => {
       const userRows = progressRows.filter((row) => row.userId === user.id);
+      const meaningfulUserRows = userRows.filter(hasStartedLessonProgress);
+      const userGameResults = gameResults.filter(
+        (result) => result.employeeId === user.id,
+      );
+      const userLessonQuizResults = lessonQuizResults.filter(
+        (result) => result.employeeId === user.id,
+      );
+      const hasStartedCourse =
+        meaningfulUserRows.length > 0 ||
+        userGameResults.length > 0 ||
+        userLessonQuizResults.length > 0;
       const completedLessons = userRows.filter((row) =>
         completedFor(user.id, row.lessonId),
       ).length;
@@ -281,33 +297,38 @@ export class ReportsService {
               ]
             : [];
         });
+        const evaluationResult = gameResults.find(
+          (item) => item.employeeId === user.id && item.moduleId === module.id,
+        );
+        const moduleStarted =
+          rows.some(hasStartedLessonProgress) ||
+          lessonQuizzes.length > 0 ||
+          Boolean(evaluationResult);
         return {
           moduleId: module.id,
           title: module.title,
           completedLessons: completed,
           totalLessons: module.lessons.length,
           progress: percent(completed, module.lessons.length),
-          status: statusFor(rows.length > 0, completed, module.lessons.length),
+          status: statusFor(moduleStarted, completed, module.lessons.length),
           lessonQuizzes,
-          evaluation: (() => {
-            const result = gameResults.find(
-              (item) =>
-                item.employeeId === user.id && item.moduleId === module.id,
-            );
-            return result
-              ? {
-                  gameType: result.gameType,
-                  finalScore: result.finalScore,
-                  timeSpentSeconds: result.timeSpentSeconds,
-                  completedAt: result.completedAt.toISOString(),
-                }
-              : null;
-          })(),
+          evaluation: evaluationResult
+            ? {
+                gameType: evaluationResult.gameType,
+                finalScore: evaluationResult.finalScore,
+                timeSpentSeconds: evaluationResult.timeSpentSeconds,
+                completedAt: evaluationResult.completedAt.toISOString(),
+              }
+            : null,
         };
       });
-      const lastActivity = userRows.reduce<Date | null>(
-        (latest, row) =>
-          !latest || row.updatedAt > latest ? row.updatedAt : latest,
+      const activityDates = [
+        ...meaningfulUserRows.map((row) => row.updatedAt),
+        ...userGameResults.map((result) => result.completedAt),
+        ...userLessonQuizResults.map((result) => result.completedAt),
+      ];
+      const lastActivity = activityDates.reduce<Date | null>(
+        (latest, row) => (!latest || row > latest ? row : latest),
         null,
       );
 
@@ -316,11 +337,7 @@ export class ReportsService {
         completedLessons,
         totalLessons: lessonIds.length,
         overallProgress: percent(completedLessons, lessonIds.length),
-        status: statusFor(
-          userRows.length > 0,
-          completedLessons,
-          lessonIds.length,
-        ),
+        status: statusFor(hasStartedCourse, completedLessons, lessonIds.length),
         lastActivity: lastActivity?.toISOString() ?? null,
         modules,
       };
@@ -333,6 +350,7 @@ export class ReportsService {
             progressByUserAndLesson.get(`${access.userId}:${lesson.id}`),
           )
           .filter((row) => row !== undefined);
+        const startedRows = rows.filter(hasStartedLessonProgress);
         const completedCount = rows.filter((row) =>
           completedFor(row.userId, lesson.id),
         ).length;
@@ -345,7 +363,7 @@ export class ReportsService {
           order: lesson.order,
           type: lesson.type,
           durationMinutes: lesson.duration,
-          startedCount: rows.length,
+          startedCount: startedRows.length,
           completedCount,
           completionRate: percent(completedCount, accesses.length),
           quizConfigured: hasLessonQuiz(lesson.quizConfig),
