@@ -34,9 +34,9 @@ export class WebhookController {
           role: 'USER',
         });
 
-        console.log(`✅ Novo utilizador captado com sucesso: ${email}`);
+        console.log(`Novo utilizador captado com sucesso: ${email}`);
       } catch (error) {
-        console.error(`❌ Erro ao salvar utilizador no Prisma:`, error);
+        console.error(`Erro ao salvar utilizador no Prisma:`, error);
       }
     }
 

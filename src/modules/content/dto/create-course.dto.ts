@@ -36,7 +36,7 @@ export class CreateCourseDto {
   @IsOptional()
   availableAt?: string | null;
 
-  // 👇 ESTA É A LINHA QUE FALTA PARA O ERRO DESAPARECER!
+  // Campo necessário para a associação com a empresa
   @IsArray()
   @IsOptional()
   modules?: any[];

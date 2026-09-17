@@ -105,5 +105,8 @@ describe('ReportsService course start metrics', () => {
     expect(report.insights[0]).toBe(
       '29% dos colaboradores atribuídos já iniciaram o curso.',
     );
+    expect(report.insights.at(-1)).toBe(
+      '12 colaboradores ainda não iniciaram o programa.',
+    );
   });
 });

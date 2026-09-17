@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CompaniesService } from './companies.service';
 import { CompaniesController } from './companies.controller';
-import { PrismaService } from '../prisma/prisma.service'; // 👈 Importa aqui
+import { PrismaService } from '../prisma/prisma.service';
 import { ClerkAuthGuard } from '../auth/clerk-auth.guard';
 import { DatabaseUserGuard } from '../auth/database-user.guard';
 import { RhAccessGuard } from '../auth/rh-access.guard';

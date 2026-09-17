@@ -59,10 +59,10 @@ export class ContentService {
   ) {}
 
   // ==========================================
-  // 🍿 MOTOR DE PROGRESSO (NETFLIX STYLE)
+  // Motor de progresso
   // ==========================================
   // ==========================================
-  // 🍿 MOTOR DE PROGRESSO (NETFLIX STYLE)
+  // Motor de progresso
   // ==========================================
   async updateProgress(
     user: User,
@@ -453,7 +453,7 @@ export class ContentService {
   }
 
   // ==========================================
-  // 📚 CRIAÇÃO E LEITURA DE CURSOS
+  // Criação e leitura de cursos
   // ==========================================
   async createCourse(dto: CreateCourseDto) {
     const { modules: inputModules, availableAt, ...courseData } = dto;
@@ -497,7 +497,7 @@ export class ContentService {
   }
 
   // ==========================================
-  // 📚 LEITURA DE CURSOS E PROGRESSO
+  // Leitura de cursos e progresso
   // ==========================================
   async findAvailableCourses(user: User) {
     return this.prisma.course.findMany({
@@ -506,7 +506,7 @@ export class ContentService {
           ? undefined
           : { userAccesses: { some: { userId: user.id } } },
       include: {
-        // 🚀 Trazemos os IDs das aulas para o Frontend conseguir fazer as contas do progresso!
+        // Inclui os IDs das aulas usados no cálculo de progresso do frontend
         modules: {
           include: {
             lessons: { select: { id: true, title: true, availableAt: true } },
@@ -521,7 +521,7 @@ export class ContentService {
     });
   }
 
-  // 🚀 NOVA FUNÇÃO: Busca tudo o que o aluno já assistiu
+  // Busca todo o progresso do aluno
   async getUserProgressAll(user: User) {
     const progressRows = await this.prisma.lessonProgress.findMany({
       where: { userId: user.id },
@@ -709,10 +709,10 @@ export class ContentService {
     };
   }
   // ==========================================
-  // ✏️ ATUALIZAR INFORMAÇÕES DO CURSO
+  // Atualizar informações do curso
   // ==========================================
   // ==========================================
-  // ✏️ ATUALIZAR INFORMAÇÕES E MÓDULOS DO CURSO
+  // Atualizar informações e módulos do curso
   // ==========================================
   async updateCourse(courseId: string, data: any) {
     const { modules: inputModules, availableAt, ...courseData } = data;
@@ -924,7 +924,7 @@ export class ContentService {
   }
 
   // ==========================================
-  // 🗑️ EXCLUIR CURSO
+  // Excluir curso
   // ==========================================
   async deleteCourse(courseId: string) {
     // Como os dados estão interligados, o Prisma apaga o curso e tudo o que está dentro dele

@@ -14,13 +14,13 @@ import { CompaniesModule } from './companies/companies.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
 
-    // 🚀 A magia para ler os teus vídeos e imagens
+    // Serviço de arquivos de vídeo e imagem
     ServeStaticModule.forRoot({
       rootPath: uploadsRootPath(),
       serveRoot: '/uploads',
     }),
 
-    // 👇 O teu módulo de conteúdo
+    // Módulo de conteúdo
     ContentModule,
     UsersModule,
     ReportsModule,

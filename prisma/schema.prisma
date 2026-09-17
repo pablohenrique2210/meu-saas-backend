@@ -79,7 +79,7 @@ model User {
   role      Role   @default(USER)
 
   // ==========================================
-  // 👇 NOVOS CAMPOS PARA O PERFIL CORPORATIVO (RH)
+  // Novos campos para o perfil corporativo (RH)
   // ==========================================
 
   // Documentação: O cargo do colaborador (Ex: "Engenheiro de Software")
@@ -119,8 +119,8 @@ model Course {
   title       String
   description String?
   category    String
-  author      String? // 👈 NOVO: Autor do curso
-  coverUrl    String? // 👈 NOVO: URL da Capa do curso
+  author      String? // Autor do curso
+  coverUrl    String? // URL da capa do curso
   isPublished Boolean   @default(false)
   availableAt DateTime?
   createdAt   DateTime  @default(now())
@@ -302,7 +302,7 @@ model Lesson {
 
   module      Module             @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   progress    UserProgress[]
-  attachments Attachment[] // 👈 NOVO: Uma aula pode ter vários anexos!
+  attachments Attachment[] // Uma aula pode ter vários anexos
   quizResults LessonQuizResult[]
   notes       LessonNote[]
 }
@@ -341,7 +341,7 @@ model LessonQuizResult {
   @@index([completedAt])
 }
 
-// 📎 NOVO: GESTÃO DE ARQUIVOS E LINKS
+// Gestão de arquivos e links
 model Attachment {
   id        String   @id @default(uuid())
   lessonId  String
@@ -353,7 +353,7 @@ model Attachment {
   lesson Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
 }
 
-// 🎮 NOVO: ÁREA DE JOGOS (GAMIFICATION)
+// Área de jogos (gamification)
 model Game {
   id          String   @id @default(uuid())
   title       String
@@ -367,7 +367,7 @@ model Game {
   playedBy UserGameProgress[]
 }
 
-// 🏆 NOVO: PROGRESSO NOS JOGOS
+// Progresso nos jogos
 model UserGameProgress {
   id          String    @id @default(uuid())
   userId      String

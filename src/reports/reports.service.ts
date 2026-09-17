@@ -533,7 +533,9 @@ export class ReportsService {
     ).length;
     if (notStarted > 0) {
       insights.push(
-        `${notStarted} colaborador${notStarted === 1 ? '' : 'es'} ainda não iniciou${notStarted === 1 ? 'u' : 'ram'} o programa.`,
+        notStarted === 1
+          ? '1 colaborador ainda não iniciou o programa.'
+          : `${notStarted} colaboradores ainda não iniciaram o programa.`,
       );
     }
     return insights;

@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
-import * as express from 'express'; // 👈 Precisamos disto para os limites
+import * as express from 'express'; // Necessário para configurar os limites
 import { isAllowedFrontendOrigin } from './config/frontend-origins';
 
 async function bootstrap() {
@@ -30,7 +30,7 @@ async function bootstrap() {
     exposedHeaders: ['Content-Disposition'],
   });
 
-  // 🚀 ABRIR O "TUBO" PARA VÍDEOS GIGANTES (Até 2GB)
+  // Permitir uploads de vídeos de até 2 GB
   app.use(express.json({ limit: '2000mb' }));
   app.use(express.urlencoded({ limit: '2000mb', extended: true }));
 
